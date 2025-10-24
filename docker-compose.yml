@@ -1,0 +1,12 @@
+services:
+  bestellsystem:
+    build: .
+    ports:
+      - "3000:3000"
+      - "3443:3443"
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./certs:/app/certs
+    environment:
+      NODE_ENV: production

@@ -1,0 +1,929 @@
+// app.js (v2.3.20 + POS)
+const $  = (s)=>document.querySelector(s);
+const $$ = (s)=>Array.from(document.querySelectorAll(s));
+const on = (sel,evt,fn)=>{ const el=(typeof sel==='string')?$(sel):sel; if(el) el.addEventListener(evt,fn); };
+
+const state={ role:'waiter', user:null, tables:[], products:[], orders:[], config:{}, version:'2.3.20', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null };
+
+async function api(path, opts={}){ const res=await fetch(path,{ headers:{'Content-Type':'application/json'}, ...opts }); if(!res.ok){ let t=await res.text(); try{ const j=JSON.parse(t); t=j.error||j.message||t; }catch{}; throw new Error(t); } return res.json(); }
+function fmtEuro(v){ return v.toFixed(2).replace('.',',')+' €'; }
+function toDate(s){ try{ if(!s) return new Date(); if(s.includes('T')) return new Date(s); return new Date(s.replace(' ','T')+'Z'); }catch{ return new Date(); } }
+function fmtAgeMinutes(s){ const d=toDate(s); const m=Math.max(0,Math.floor((Date.now()-d.getTime())/60000)); return `${m} min`; }
+
+function updateHeader(viewId){
+  const titles={'#view-login':'Login','#view-tables':'Tische','#view-products':'Produkte','#view-theke':'Theke','#view-cash':'Kassieren','#view-cash-detail':'Bestellung','#view-admin':'Admin','#view-pos-history':'Letzte Bestellungen'};
+  $('#hdr-title').textContent=titles[viewId]||'Bestellsystem';
+  const onLogin=viewId==='#view-login';
+  $('#btn-logout').classList.toggle('hidden', onLogin || viewId==='#view-products' || viewId==='#view-pos-history' || viewId==='#view-cash' || viewId==='#view-cash-detail');
+  $('#btn-euro').classList.toggle('hidden', !(state.role==='waiter' && !onLogin && viewId!=='#view-products' && viewId!=='#view-cash' && viewId!=='#view-cash-detail'));
+  $('#btn-back-header').classList.toggle('hidden', !(viewId==='#view-products' || viewId==='#view-pos-history' || viewId==='#view-cash' || viewId==='#view-cash-detail'));
+  $('#btn-send-header').classList.toggle('hidden', viewId!=='#view-products');
+  $('#btn-pos-toggle').classList.toggle('hidden', viewId!=='#view-theke' || state.role!=='bar');
+  $('#btn-pos-history').classList.toggle('hidden', !(viewId==='#view-theke' && state.role==='bar'));
+  $('#hdr-right').classList.toggle('hidden', viewId!=='#view-cash-detail');
+  if(viewId==='#view-products'){ $('#hdr-left').textContent=''; }
+  else if(state.role==='bar') $('#hdr-left').textContent='v'+state.version;
+  else if(state.role==='waiter') $('#hdr-left').textContent=state.user||'';
+  else if(state.role==='admin') $('#hdr-left').textContent='v'+state.version;
+  else $('#hdr-left').textContent='';
+}
+function show(viewId){ $$('.view').forEach(v=>v.classList.add('hidden')); $(viewId).classList.remove('hidden'); $('#app-header').classList.remove('hidden'); updateHeader(viewId); }
+function setRole(r){ state.role=r; $$('.role-switch .role').forEach(b=>b.classList.toggle('active', b.dataset.role===r)); const isWaiter=r==='waiter'; $('#name-wrap').classList.toggle('hidden', !isWaiter); $('#pin-wrap').classList.toggle('hidden', isWaiter); }
+$$('.role-switch .role').forEach(b=>on(b,'click',()=>setRole(b.dataset.role))); setRole('waiter');
+
+on('#btn-login','click', async ()=>{ try{ if(state.role==='waiter'){ const name=$('#inp-name').value.trim(); if(!name) return alert('Bitte Name eingeben'); state.user=name; await loadInitial(); await startHeartbeat(); await requestWakeLock(); renderTables(); show('#view-tables'); pollOrders(); } else if(state.role==='bar'){ const pin=$('#inp-pin').value.trim(); if(!pin||pin.length<4) return alert('Bitte gültige PIN eingeben'); state.user='Theke'; await loadInitial(); await requestWakeLock(); renderTheke(); show('#view-theke'); pollOrders(); } else { const pin=$('#inp-pin').value.trim(); if(!pin||pin.length<4) return alert('Bitte gültige PIN eingeben'); state.user='Admin'; await loadInitial(); await requestWakeLock(); await adminInit(); show('#view-admin'); pollOrders(); } }catch(e){ alert('Fehler: '+e.message); } });
+on('#btn-logout','click', async ()=>{
+  if(!confirm('Möchten Sie sich wirklich abmelden?')) return;
+  releaseWakeLock();
+  await stopHeartbeat();
+  location.reload();
+});
+on('#btn-euro','click', ()=>{ renderCash(); show('#view-cash'); });
+on('#btn-back-header','click', ()=>{
+  const currentView=$$('.view').find(v=>!v.classList.contains('hidden'));
+  if(currentView && currentView.id==='view-pos-history') show('#view-theke');
+  else if(currentView && currentView.id==='view-cash-detail'){ renderCash(); show('#view-cash'); }
+  else if(currentView && currentView.id==='view-cash') show('#view-tables');
+  else show('#view-tables');
+});
+on('#btn-send-header','click', ()=>sendOrder());
+on('#btn-pos-toggle','click', ()=>{ state.posMode=!state.posMode; $('#btn-pos-toggle').textContent=state.posMode?'POS: AN':'POS: AUS'; $('#btn-pos-toggle').classList.toggle('active', state.posMode); renderTheke(); updateHeader('#view-theke'); });
+on('#btn-pos-history','click', ()=>{ renderPOSHistory(); show('#view-pos-history'); });
+
+async function loadInitial(){ state.config=await api('/api/config'); state.tables=await api('/api/tables'); state.products=await api('/api/products'); state.orders=await api('/api/orders'); state.sessions=await api('/api/sessions'); }
+
+async function requestWakeLock(){
+  try{
+    if('wakeLock' in navigator){
+      state.wakeLock=await navigator.wakeLock.request('screen');
+      console.log('Wake Lock aktiv - Display bleibt eingeschaltet');
+      state.wakeLock.addEventListener('release',()=>{ console.log('Wake Lock freigegeben'); });
+    }
+  }catch(err){ console.log('Wake Lock nicht verfügbar:',err.message); }
+}
+
+function releaseWakeLock(){
+  if(state.wakeLock){
+    state.wakeLock.release();
+    state.wakeLock=null;
+  }
+}
+
+async function startHeartbeat(){
+  if(state.role==='waiter' && state.user){
+    await api('/api/sessions/heartbeat', {method:'POST', body:JSON.stringify({waiter:state.user})});
+    if(state.heartbeatInterval) clearInterval(state.heartbeatInterval);
+    state.heartbeatInterval=setInterval(async ()=>{
+      try{ await api('/api/sessions/heartbeat', {method:'POST', body:JSON.stringify({waiter:state.user})}); }catch{}
+    }, 60000); // Every 60 seconds
+  }
+}
+
+async function stopHeartbeat(){
+  if(state.heartbeatInterval){
+    clearInterval(state.heartbeatInterval);
+    state.heartbeatInterval=null;
+  }
+  if(state.role==='waiter' && state.user){
+    try{ await api(`/api/sessions/${encodeURIComponent(state.user)}`, {method:'DELETE'}); }catch{}
+  }
+}
+
+/* Waiter */
+function renderTables(){ const grid=$('#tables-grid'); grid.innerHTML=''; const cols=Math.max(3,Math.min(6,+(state.config.grid_cols??4))); grid.style.setProperty('--cols',cols); const by={}; state.orders.filter(o=>o.status!=='paid'&&o.waiter===state.user).forEach(o=>{by[o.table_id]=(by[o.table_id]||0)+1}); state.tables.forEach(t=>{ const b=document.createElement('button'); b.className='table-btn'; b.textContent=t.id; if(by[t.id]){ const d=document.createElement('span'); d.className='dot'; b.appendChild(d); } b.addEventListener('click',()=>openProducts(t.id)); grid.appendChild(b); }); }
+let currentTable=null; let basket=new Map();
+function openProducts(tid){ currentTable=tid; $('#prod-table-label').textContent='Tisch '+tid; basket.clear(); renderProducts(); show('#view-products'); }
+function contrastColor(hex){ if(!hex) return '#0b0c0e'; const h=hex.replace('#',''); if(h.length!=6) return '#0b0c0e'; const r=parseInt(h[0]+h[1],16), g=parseInt(h[2]+h[3],16), b=parseInt(h[4]+h[5],16); const yiq=((r*299)+(g*587)+(b*114))/1000; return yiq>=160 ? '#0b0c0e':'#ffffff'; }
+function renderProducts(){ const grid=$('#products-grid'); grid.innerHTML=''; state.products.filter(p=>p.active).forEach(p=>{ const card=document.createElement('div'); card.className='product-btn product-v1'; if(p.color){ if(p.half){ card.style.background=`linear-gradient(to top, ${p.color} 50%, transparent 50%)`; card.style.borderColor='rgba(0,0,0,.1)'; } else { card.style.background=p.color; card.style.borderColor='rgba(0,0,0,.1)'; const col=contrastColor(p.color); card.style.color=col; } card.style.boxShadow='0 6px 16px rgba(0,0,0,.08)'; } const minus=document.createElement('button'); minus.className='minus'; minus.setAttribute('aria-label','Minus'); minus.addEventListener('click',(e)=>{ e.stopPropagation(); addQty(p.id,-1); }); const name=document.createElement('div'); name.className='name'; const parts=p.name.split(' '); if(parts.length>1) name.innerHTML=parts[0]+'<br>'+parts.slice(1).join(' '); else name.textContent=p.name; const badge=document.createElement('div'); badge.className='badge'; badge.textContent=basket.get(p.id)||0; const top=document.createElement('div'); top.className='topbar'; top.append(minus,badge); card.append(top,name); card.addEventListener('click',()=>{ addQty(p.id,+1); badge.textContent=basket.get(p.id)||0; }); grid.appendChild(card); }); updateHeader('#view-products'); }
+function addQty(pid,delta){ const q=Math.max(0,(basket.get(pid)||0)+delta); if(q===0) basket.delete(pid); else basket.set(pid,q); $$('#products-grid .product-btn .badge').forEach((b,idx)=>{ const pid=state.products.filter(p=>p.active)[idx].id; b.textContent=basket.get(pid)||0; }); }
+function orderItemsArray(){ const items=[]; basket.forEach((q,pid)=>{ for(let i=0;i<q;i++) items.push(pid); }); return items; }
+async function sendOrder(){ if(basket.size===0) return alert('Bitte Produkte auswählen'); const items=orderItemsArray(); await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: currentTable, waiter: state.user, items })}); basket.clear(); state.orders=await api('/api/orders'); renderTables(); show('#view-tables'); }
+
+/* Cash */
+function orderTotal(o){ return o.items.filter(it=>!it.paid).reduce((s,it)=>s+it.price,0); }
+function renderCash(){
+  const wrap=$('#cash-list');
+  wrap.innerHTML='';
+  const mine=state.orders.filter(o=>o.waiter===state.user && o.status!=='paid');
+  if(mine.length===0){
+    wrap.innerHTML='<div class="muted">Keine offenen Bestellungen.</div>';
+    return;
+  }
+  mine.sort((a,b)=>a.table_id-b.table_id||a.created_at.localeCompare(b.created_at));
+  mine.forEach(o=>{
+    const card=document.createElement('div');
+    card.className='cash-card clickable';
+    card.addEventListener('click',()=>openCashDetail(o.id));
+
+    const row=document.createElement('div');
+    row.className='row';
+    const left=document.createElement('div');
+    left.innerHTML=`<strong>Tisch ${o.table_id}</strong> · <span class="muted">${fmtAgeMinutes(o.created_at)}</span>`;
+    const right=document.createElement('div');
+    right.style.display='flex';
+    right.style.flexDirection='column';
+    right.style.alignItems='flex-end';
+    right.style.gap='8px';
+    const price=document.createElement('div');
+    price.innerHTML=`<strong>${fmtEuro(orderTotal(o))}</strong>`;
+    const btn=document.createElement('button');
+    btn.className='primary';
+    btn.innerHTML='<span class="material-symbols-outlined">check</span> Alles kassiert';
+    btn.addEventListener('click', async (e)=>{
+      e.stopPropagation();
+      await api(`/api/orders/${o.id}/pay`,{method:'POST'});
+      state.orders=await api('/api/orders');
+      renderCash();
+      renderTables();
+    });
+    right.append(price,btn);
+    row.append(left,right);
+    card.appendChild(row);
+    wrap.appendChild(card);
+  });
+}
+
+/* Cash Detail */
+let currentCashOrder=null;
+let selectedItems=new Set();
+
+function openCashDetail(orderId){
+  currentCashOrder=state.orders.find(o=>o.id===orderId);
+  if(!currentCashOrder) return;
+  selectedItems.clear();
+  renderCashDetail();
+  show('#view-cash-detail');
+  const hdrRight=$('#hdr-right');
+  hdrRight.innerHTML=`<strong>Tisch ${currentCashOrder.table_id}</strong> · <span class="muted">${fmtAgeMinutes(currentCashOrder.created_at)}</span>`;
+  hdrRight.classList.remove('hidden');
+}
+
+function renderCashDetail(){
+  if(!currentCashOrder) return;
+  const wrap=$('#cash-detail-content');
+  wrap.innerHTML='';
+
+  const itemsList=document.createElement('div');
+  itemsList.className='cash-detail-items';
+
+  const unpaidItems=currentCashOrder.items.filter(it=>!it.paid);
+
+  const grouped=new Map();
+  unpaidItems.forEach(it=>{
+    const key=it.product_id;
+    if(!grouped.has(key)) grouped.set(key,{product_id:key,name:productName(key),price:it.price,ids:[]});
+    grouped.get(key).ids.push(it.id);
+  });
+
+  grouped.forEach(group=>{
+    const selectedCount=group.ids.filter(id=>selectedItems.has(id)).length;
+
+    const itemCard=document.createElement('div');
+    itemCard.className='cash-detail-item';
+    if(selectedCount>0) itemCard.classList.add('selected');
+
+    const left=document.createElement('div');
+    left.style.display='flex';
+    left.style.alignItems='center';
+    left.style.gap='12px';
+
+    const controls=document.createElement('div');
+    controls.className='qty-controls';
+
+    const minusBtn=document.createElement('button');
+    minusBtn.className='qty-btn';
+    minusBtn.textContent='-';
+    minusBtn.disabled=selectedCount===0;
+    minusBtn.addEventListener('click',(e)=>{
+      e.stopPropagation();
+      if(selectedCount>0){
+        const lastSelected=group.ids.filter(id=>selectedItems.has(id)).pop();
+        selectedItems.delete(lastSelected);
+        renderCashDetail();
+      }
+    });
+
+    const qtyDisplay=document.createElement('span');
+    qtyDisplay.className='qty-display';
+    qtyDisplay.textContent=`${selectedCount}/${group.ids.length}`;
+
+    const plusBtn=document.createElement('button');
+    plusBtn.className='qty-btn';
+    plusBtn.textContent='+';
+    plusBtn.disabled=selectedCount===group.ids.length;
+    plusBtn.addEventListener('click',(e)=>{
+      e.stopPropagation();
+      if(selectedCount<group.ids.length){
+        const nextUnselected=group.ids.find(id=>!selectedItems.has(id));
+        selectedItems.add(nextUnselected);
+        renderCashDetail();
+      }
+    });
+
+    controls.append(minusBtn,qtyDisplay,plusBtn);
+
+    const nameEl=document.createElement('div');
+    nameEl.innerHTML=`<strong>${group.name}</strong>`;
+
+    left.append(controls,nameEl);
+
+    const right=document.createElement('div');
+    right.innerHTML=`<strong>${fmtEuro(group.price*selectedCount)}</strong>`;
+
+    itemCard.append(left,right);
+    itemsList.appendChild(itemCard);
+  });
+
+  wrap.appendChild(itemsList);
+
+  const totalAll=unpaidItems.reduce((s,it)=>s+it.price,0);
+  const totalSelected=unpaidItems.filter(it=>selectedItems.has(it.id)).reduce((s,it)=>s+it.price,0);
+  const totalRest=totalAll-totalSelected;
+
+  const summary=document.createElement('div');
+  summary.className='cash-detail-summary';
+  summary.innerHTML=`
+    <div class="summary-row"><span>Teilsumme:</span><strong>${fmtEuro(totalSelected)}</strong></div>
+    <div class="summary-row"><span>Restsumme:</span><strong>${fmtEuro(totalRest)}</strong></div>
+    <div class="summary-row total"><span>Gesamt:</span><strong>${fmtEuro(totalAll)}</strong></div>
+  `;
+  wrap.appendChild(summary);
+
+  const actions=document.createElement('div');
+  actions.className='cash-detail-actions';
+
+  const paySelectedBtn=document.createElement('button');
+  paySelectedBtn.className='primary';
+  paySelectedBtn.innerHTML='<span class="material-symbols-outlined">payments</span> Teilzahlung kassieren';
+  paySelectedBtn.disabled=selectedItems.size===0;
+  paySelectedBtn.addEventListener('click',async ()=>{
+    if(selectedItems.size===0) return;
+    await api(`/api/orders/${currentCashOrder.id}/pay-items`,{method:'POST', body:JSON.stringify({itemIds:Array.from(selectedItems)})});
+    state.orders=await api('/api/orders');
+    currentCashOrder=state.orders.find(o=>o.id===currentCashOrder.id);
+    if(!currentCashOrder || currentCashOrder.status==='paid'){
+      renderCash();
+      renderTables();
+      show('#view-cash');
+    } else {
+      selectedItems.clear();
+      renderCashDetail();
+    }
+  });
+
+  const payAllBtn=document.createElement('button');
+  payAllBtn.className='outline';
+  payAllBtn.innerHTML='<span class="material-symbols-outlined">check</span> Alles kassiert';
+  payAllBtn.addEventListener('click',async ()=>{
+    await api(`/api/orders/${currentCashOrder.id}/pay`,{method:'POST'});
+    state.orders=await api('/api/orders');
+    renderCash();
+    renderTables();
+    show('#view-cash');
+  });
+
+  actions.append(paySelectedBtn,payAllBtn);
+  wrap.appendChild(actions);
+}
+
+/* Theke */
+function isOrderReady(o){ return o.items.length>0 && o.items.every(i=>i.ready); }
+function productName(id){ const p=state.products.find(x=>x.id===id); return p? p.name : ('P'+id); }
+async function renderTheke(){
+  if(state.posMode){
+    renderPOSModeWithHybrid();
+  } else {
+    renderKitchenMode();
+  }
+}
+
+function renderKitchenMode(){
+  const cols=$('#theke-columns');
+  cols.innerHTML='';
+  cols.className='theke-columns';
+
+  // Sammle nur aktive Bediener (aus Sessions)
+  const activeWaiters=state.sessions.map(s=>s.waiter).filter(w=>w!=='POS');
+
+  // Gruppiere offene Bestellungen nach Bediener
+  const groups={};
+  state.orders.filter(o=>o.status!=='picked'&&o.status!=='paid').forEach(o=>{
+    (groups[o.waiter]=groups[o.waiter]||[]).push(o);
+  });
+
+  const waiters=activeWaiters.sort();
+
+  // Wenn nur ein Bediener, füge CSS-Klasse hinzu
+  if(waiters.length===1){
+    cols.classList.add('single-waiter');
+  }
+
+  waiters.forEach(w=>{
+    const list=groups[w]||[];
+    list.sort((a,b)=>a.created_at.localeCompare(b.created_at));
+
+    const col=document.createElement('div');
+    col.className='theke-col';
+
+    const title=document.createElement('div');
+    title.className='col-title';
+    title.textContent=w||'—';
+    col.appendChild(title);
+
+    if(list.length===0){
+      const empty=document.createElement('div');
+      empty.className='muted';
+      empty.style.padding='12px';
+      empty.style.textAlign='center';
+      empty.textContent='Keine offenen Bestellungen';
+      col.appendChild(empty);
+    } else {
+      list.forEach(o=>{
+        const card=document.createElement('div');
+        card.className='order-card';
+        const layout=(state.config.theke_layout||'badges');
+        const row=document.createElement('div');
+        row.className='row';
+        const meta=document.createElement('div');
+        meta.className='meta';
+        const h=document.createElement('div');
+        h.innerHTML=`<strong>Tisch ${o.table_id}</strong>`;
+        const t=document.createElement('div');
+        t.className='time';
+        t.textContent=fmtAgeMinutes(o.created_at);
+        meta.append(h,t);
+        if(layout==='badges'){
+          const b=document.createElement('span');
+          const ready=isOrderReady(o);
+          b.className='status '+(ready?'ready':'open');
+          b.textContent=ready?'bereit':'offen';
+          row.append(meta,b);
+        } else {
+          card.classList.add(isOrderReady(o)?'bg-ready':'bg-open');
+          row.append(meta,document.createElement('span'));
+        }
+        card.appendChild(row);
+        const items=document.createElement('div');
+        items.className='items';
+        o.items.forEach(it=>{
+          const line=document.createElement('div');
+          line.className='item '+(it.ready?'ready':'');
+          line.textContent=productName(it.product_id);
+          line.addEventListener('click', async ()=>{
+            await api(`/api/orders/${o.id}/items/${it.id}/toggle-ready`,{method:'PATCH'});
+            state.orders=await api('/api/orders');
+            renderTheke();
+          });
+          items.appendChild(line);
+        });
+        card.appendChild(items);
+        const actions=document.createElement('div');
+        actions.className='actions';
+        const left=document.createElement('div');
+        left.className='left';
+        const right=document.createElement('div');
+        right.className='right';
+        const allReady=document.createElement('button');
+        allReady.className='outline';
+        allReady.textContent='Alle bereit';
+        allReady.addEventListener('click', async ()=>{
+          for(const it of o.items){
+            if(!it.ready) await api(`/api/orders/${o.id}/items/${it.id}/toggle-ready`,{method:'PATCH'});
+          }
+          state.orders=await api('/api/orders');
+          renderTheke();
+        });
+        left.appendChild(allReady);
+        const pick=document.createElement('button');
+        pick.className='outline';
+        pick.textContent='Abgeholt';
+        pick.addEventListener('click', async ()=>{
+          await api(`/api/orders/${o.id}/pickup`,{method:'POST'});
+          state.orders=await api('/api/orders');
+          renderTheke();
+        });
+        right.appendChild(pick);
+        actions.append(left,right);
+        card.appendChild(actions);
+        col.appendChild(card);
+      });
+    }
+
+    cols.appendChild(col);
+  });
+}
+
+function renderPOSModeWithHybrid(){
+  const cols=$('#theke-columns');
+  cols.innerHTML='';
+
+  // Berechne Layout basierend auf Anzahl Bediener
+  const activeBediener=state.sessions.filter(s=>s.waiter!=='Theke' && s.waiter!=='Admin').length;
+
+  if(activeBediener===0){
+    // Kein Bediener: Nur POS (altes Design)
+    cols.className='pos-layout';
+    renderPOSOnlyMode(cols);
+  } else {
+    // Hybrid-Layout
+    const layout=activeBediener===1?'30/70':'50/50';
+    cols.className=`hybrid-layout split-${layout.replace('/','-')}`;
+
+    // Linke Spalte: Bediener-Bestellungen
+    const bedienerCol=document.createElement('div');
+    bedienerCol.className='bediener-column';
+    if(activeBediener>=2){
+      bedienerCol.classList.add('multi-waiter');
+    }
+    renderBedienerColumn(bedienerCol);
+    cols.appendChild(bedienerCol);
+
+    // Rechte Spalte: POS (50% Produkte, 50% Checkout)
+    const posCol=document.createElement('div');
+    posCol.className='pos-column';
+    renderPOSColumn(posCol);
+    cols.appendChild(posCol);
+  }
+}
+
+function renderPOSOnlyMode(container){
+  // Links: Produkte
+  const leftCol=document.createElement('div');
+  leftCol.className='pos-products';
+  const prodGrid=document.createElement('div');
+  prodGrid.className='grid products';
+
+  state.products.filter(p=>p.active).forEach(p=>{
+    const card=document.createElement('div');
+    card.className='product-btn product-v1';
+    if(p.color){
+      if(p.half){
+        card.style.background=`linear-gradient(to top, ${p.color} 50%, transparent 50%)`;
+        card.style.borderColor='rgba(0,0,0,.1)';
+      } else {
+        card.style.background=p.color;
+        card.style.borderColor='rgba(0,0,0,.1)';
+        const col=contrastColor(p.color);
+        card.style.color=col;
+      }
+      card.style.boxShadow='0 6px 16px rgba(0,0,0,.08)';
+    }
+    const minus=document.createElement('button');
+    minus.className='minus';
+    minus.setAttribute('aria-label','Minus');
+    minus.addEventListener('click',(e)=>{
+      e.stopPropagation();
+      addPOSQty(p.id,-1);
+    });
+    const name=document.createElement('div');
+    name.className='name';
+    const parts=p.name.split(' ');
+    if(parts.length>1) name.innerHTML=parts[0]+'<br>'+parts.slice(1).join(' ');
+    else name.textContent=p.name;
+    const badge=document.createElement('div');
+    badge.className='badge';
+    badge.textContent=state.posBasket.get(p.id)||0;
+    const top=document.createElement('div');
+    top.className='topbar';
+    top.append(minus,badge);
+    card.append(top,name);
+    card.addEventListener('click',()=>{
+      addPOSQty(p.id,+1);
+      badge.textContent=state.posBasket.get(p.id)||0;
+    });
+    prodGrid.appendChild(card);
+  });
+
+  leftCol.appendChild(prodGrid);
+
+  // Rechts: Summary
+  const rightCol=document.createElement('div');
+  rightCol.className='pos-summary';
+
+  const title=document.createElement('h3');
+  title.textContent='Aktuelle Bestellung';
+  title.style.marginBottom='12px';
+  rightCol.appendChild(title);
+
+  const itemsList=document.createElement('div');
+  itemsList.className='pos-items-list';
+
+  let total=0;
+  if(state.posBasket.size===0){
+    const empty=document.createElement('div');
+    empty.className='muted';
+    empty.textContent='Keine Produkte ausgewählt';
+    itemsList.appendChild(empty);
+  } else {
+    state.posBasket.forEach((qty,pid)=>{
+      const prod=state.products.find(p=>p.id===pid);
+      if(!prod) return;
+      const item=document.createElement('div');
+      item.className='pos-item';
+      const left=document.createElement('div');
+      left.innerHTML=`<strong>${qty}x</strong> ${prod.name}`;
+      const right=document.createElement('div');
+      const itemTotal=(prod.price_cents/100)*qty;
+      total+=itemTotal;
+      right.innerHTML=`<strong>${fmtEuro(itemTotal)}</strong>`;
+      item.append(left,right);
+      itemsList.appendChild(item);
+    });
+  }
+
+  rightCol.appendChild(itemsList);
+
+  const totalRow=document.createElement('div');
+  totalRow.className='pos-total';
+  const totalLabel=document.createElement('div');
+  totalLabel.innerHTML='<strong>Gesamt:</strong>';
+  const totalAmount=document.createElement('div');
+  totalAmount.innerHTML=`<strong style="font-size:20px">${fmtEuro(total)}</strong>`;
+  totalRow.append(totalLabel,totalAmount);
+  rightCol.appendChild(totalRow);
+
+  const actions=document.createElement('div');
+  actions.className='pos-actions';
+
+  const clearBtn=document.createElement('button');
+  clearBtn.className='outline';
+  clearBtn.textContent='Abbrechen';
+  clearBtn.addEventListener('click',()=>{
+    state.posBasket.clear();
+    renderTheke();
+  });
+
+  const payBtn=document.createElement('button');
+  payBtn.className='primary';
+  payBtn.innerHTML='<span class="material-symbols-outlined">check</span> Alles kassiert';
+  payBtn.disabled=state.posBasket.size===0;
+  payBtn.addEventListener('click', async ()=>{
+    if(state.posBasket.size===0) return;
+    const items=[];
+    state.posBasket.forEach((q,pid)=>{ for(let i=0;i<q;i++) items.push(pid); });
+    const table=state.tables[0]?.id||1;
+    const orderRes=await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: table, waiter: 'POS', items })});
+    await api(`/api/orders/${orderRes.id}/pay`,{method:'POST'});
+    state.posBasket.clear();
+    state.orders=await api('/api/orders');
+    renderTheke();
+  });
+
+  actions.append(clearBtn,payBtn);
+  rightCol.appendChild(actions);
+
+  container.append(leftCol,rightCol);
+}
+
+function renderBedienerColumn(container){
+  // Verwende exakt die gleiche Logik wie Kitchen Mode, aber ohne .theke-columns Wrapper
+  const activeWaiters=state.sessions.filter(s=>s.waiter!=='Theke' && s.waiter!=='Admin' && s.waiter!=='POS').map(s=>s.waiter);
+
+  const groups={};
+  state.orders.filter(o=>o.status!=='picked'&&o.status!=='paid').forEach(o=>{
+    if(activeWaiters.includes(o.waiter)){
+      (groups[o.waiter]=groups[o.waiter]||[]).push(o);
+    }
+  });
+
+  const waiters=activeWaiters.sort();
+
+  // Bei mehreren Bedienern: Erstelle für jeden eine eigene theke-col
+  // Bei einem Bediener: Nur eine theke-col
+  waiters.forEach(w=>{
+    const list=groups[w]||[];
+    list.sort((a,b)=>a.created_at.localeCompare(b.created_at));
+
+    const col=document.createElement('div');
+    col.className='theke-col';
+
+    // Name wie bei POS:AUS als col-title
+    const title=document.createElement('div');
+    title.className='col-title';
+    title.textContent=w||'—';
+    col.appendChild(title);
+
+    if(list.length===0){
+      const empty=document.createElement('div');
+      empty.className='muted';
+      empty.style.padding='12px';
+      empty.style.textAlign='center';
+      empty.textContent='Keine offenen Bestellungen';
+      col.appendChild(empty);
+    } else {
+      list.forEach(o=>{
+        const card=document.createElement('div');
+        card.className='order-card';
+        const layout=(state.config.theke_layout||'badges');
+        const row=document.createElement('div');
+        row.className='row';
+        const meta=document.createElement('div');
+        meta.className='meta';
+        const h=document.createElement('div');
+        h.innerHTML=`<strong>Tisch ${o.table_id}</strong>`;
+        const t=document.createElement('div');
+        t.className='time';
+        t.textContent=fmtAgeMinutes(o.created_at);
+        meta.append(h,t);
+        if(layout==='badges'){
+          const b=document.createElement('span');
+          const ready=isOrderReady(o);
+          b.className='status '+(ready?'ready':'open');
+          b.textContent=ready?'bereit':'offen';
+          row.append(meta,b);
+        } else {
+          card.classList.add(isOrderReady(o)?'bg-ready':'bg-open');
+          row.append(meta,document.createElement('span'));
+        }
+        card.appendChild(row);
+        const items=document.createElement('div');
+        items.className='items';
+        o.items.forEach(it=>{
+          const line=document.createElement('div');
+          line.className='item '+(it.ready?'ready':'');
+          line.textContent=productName(it.product_id);
+          line.addEventListener('click', async ()=>{
+            await api(`/api/orders/${o.id}/items/${it.id}/toggle-ready`,{method:'PATCH'});
+            state.orders=await api('/api/orders');
+            renderTheke();
+          });
+          items.appendChild(line);
+        });
+        card.appendChild(items);
+        const actions=document.createElement('div');
+        actions.className='actions';
+        const left=document.createElement('div');
+        left.className='left';
+        const right=document.createElement('div');
+        right.className='right';
+        const allReady=document.createElement('button');
+        allReady.className='outline';
+        allReady.textContent='Alle bereit';
+        allReady.addEventListener('click', async ()=>{
+          for(const it of o.items){
+            if(!it.ready) await api(`/api/orders/${o.id}/items/${it.id}/toggle-ready`,{method:'PATCH'});
+          }
+          state.orders=await api('/api/orders');
+          renderTheke();
+        });
+        left.appendChild(allReady);
+        const pick=document.createElement('button');
+        pick.className='outline';
+        pick.textContent='Abgeholt';
+        pick.addEventListener('click', async ()=>{
+          await api(`/api/orders/${o.id}/pickup`,{method:'POST'});
+          state.orders=await api('/api/orders');
+          renderTheke();
+        });
+        right.appendChild(pick);
+        actions.append(left,right);
+        card.appendChild(actions);
+        col.appendChild(card);
+      });
+    }
+
+    container.appendChild(col);
+  });
+}
+
+function renderPOSColumn(container){
+  // Obere 70%: Produkte
+  const productsArea=document.createElement('div');
+  productsArea.className='pos-products-area';
+
+  const prodGrid=document.createElement('div');
+  prodGrid.className='grid products';
+
+  state.products.filter(p=>p.active).forEach(p=>{
+    const card=document.createElement('div');
+    card.className='product-btn product-v1';
+    if(p.color){
+      if(p.half){
+        card.style.background=`linear-gradient(to top, ${p.color} 50%, transparent 50%)`;
+        card.style.borderColor='rgba(0,0,0,.1)';
+      } else {
+        card.style.background=p.color;
+        card.style.borderColor='rgba(0,0,0,.1)';
+        const col=contrastColor(p.color);
+        card.style.color=col;
+      }
+      card.style.boxShadow='0 6px 16px rgba(0,0,0,.08)';
+    }
+    const minus=document.createElement('button');
+    minus.className='minus';
+    minus.setAttribute('aria-label','Minus');
+    minus.addEventListener('click',(e)=>{
+      e.stopPropagation();
+      addPOSQty(p.id,-1);
+    });
+    const name=document.createElement('div');
+    name.className='name';
+    const parts=p.name.split(' ');
+    if(parts.length>1) name.innerHTML=parts[0]+'<br>'+parts.slice(1).join(' ');
+    else name.textContent=p.name;
+    const badge=document.createElement('div');
+    badge.className='badge';
+    badge.textContent=state.posBasket.get(p.id)||0;
+    const top=document.createElement('div');
+    top.className='topbar';
+    top.append(minus,badge);
+    card.append(top,name);
+    card.addEventListener('click',()=>{
+      addPOSQty(p.id,+1);
+      badge.textContent=state.posBasket.get(p.id)||0;
+    });
+    prodGrid.appendChild(card);
+  });
+
+  productsArea.appendChild(prodGrid);
+  container.appendChild(productsArea);
+
+  // Untere 50%: Checkout (wie POS-Only Modus)
+  const checkoutArea=document.createElement('div');
+  checkoutArea.className='pos-checkout-area';
+
+  const title=document.createElement('h3');
+  title.textContent='Aktuelle Bestellung';
+  checkoutArea.appendChild(title);
+
+  const itemsList=document.createElement('div');
+  itemsList.className='pos-items-list';
+
+  let total=0;
+  if(state.posBasket.size===0){
+    const empty=document.createElement('div');
+    empty.className='muted';
+    empty.textContent='Keine Produkte ausgewählt';
+    itemsList.appendChild(empty);
+  } else {
+    state.posBasket.forEach((qty,pid)=>{
+      const prod=state.products.find(p=>p.id===pid);
+      if(!prod) return;
+      const item=document.createElement('div');
+      item.className='pos-item';
+      const left=document.createElement('div');
+      left.innerHTML=`<strong>${qty}x</strong> ${prod.name}`;
+      const right=document.createElement('div');
+      const itemTotal=(prod.price_cents/100)*qty;
+      total+=itemTotal;
+      right.innerHTML=`<strong>${fmtEuro(itemTotal)}</strong>`;
+      item.append(left,right);
+      itemsList.appendChild(item);
+    });
+  }
+
+  checkoutArea.appendChild(itemsList);
+
+  const totalRow=document.createElement('div');
+  totalRow.className='pos-total';
+  const totalLabel=document.createElement('div');
+  totalLabel.innerHTML='<strong>Gesamt:</strong>';
+  const totalAmount=document.createElement('div');
+  totalAmount.innerHTML=`<strong style="font-size:20px">${fmtEuro(total)}</strong>`;
+  totalRow.append(totalLabel,totalAmount);
+  checkoutArea.appendChild(totalRow);
+
+  const actions=document.createElement('div');
+  actions.className='pos-actions';
+
+  const clearBtn=document.createElement('button');
+  clearBtn.className='outline';
+  clearBtn.textContent='Abbrechen';
+  clearBtn.addEventListener('click',()=>{
+    state.posBasket.clear();
+    renderTheke();
+  });
+
+  const payBtn=document.createElement('button');
+  payBtn.className='primary';
+  payBtn.innerHTML='<span class="material-symbols-outlined">check</span> Alles kassiert';
+  payBtn.disabled=state.posBasket.size===0;
+  payBtn.addEventListener('click', async ()=>{
+    if(state.posBasket.size===0) return;
+    const items=[];
+    state.posBasket.forEach((q,pid)=>{ for(let i=0;i<q;i++) items.push(pid); });
+    const table=state.tables[0]?.id||1;
+    const orderRes=await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: table, waiter: 'POS', items })});
+    await api(`/api/orders/${orderRes.id}/pay`,{method:'POST'});
+    state.posBasket.clear();
+    state.orders=await api('/api/orders');
+    renderTheke();
+  });
+
+  actions.append(clearBtn,payBtn);
+  checkoutArea.appendChild(actions);
+
+  container.appendChild(checkoutArea);
+}
+
+function addPOSQty(pid,delta){
+  const q=Math.max(0,(state.posBasket.get(pid)||0)+delta);
+  if(q===0) state.posBasket.delete(pid);
+  else state.posBasket.set(pid,q);
+  renderTheke();
+}
+
+/* POS History */
+function renderPOSHistory(){
+  const wrap=$('#pos-history-list');
+  wrap.innerHTML='';
+
+  const posOrders=state.orders.filter(o=>o.status!=='open').sort((a,b)=>b.created_at.localeCompare(a.created_at)).slice(0,50);
+
+  if(posOrders.length===0){
+    wrap.innerHTML='<div class="muted">Keine abgeschlossenen Bestellungen vorhanden.</div>';
+    return;
+  }
+
+  posOrders.forEach(o=>{
+    const card=document.createElement('div');
+    card.className='cash-card';
+
+    const row=document.createElement('div');
+    row.className='row';
+
+    const left=document.createElement('div');
+    const createdDate=toDate(o.created_at);
+    const timeStr=createdDate.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
+    const dateStr=createdDate.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'});
+    left.innerHTML=`<strong>${o.waiter} #${o.id}</strong> · <span class="muted">Tisch ${o.table_id} · ${dateStr} ${timeStr}</span>`;
+
+    const middle=document.createElement('div');
+    const statusBadge=document.createElement('span');
+    statusBadge.className='status-badge';
+    if(o.status==='ready'){
+      statusBadge.classList.add('status-ready');
+      statusBadge.textContent='bereit';
+    } else if(o.status==='picked'){
+      statusBadge.classList.add('status-picked');
+      statusBadge.textContent='abgeholt';
+    } else if(o.status==='paid'){
+      statusBadge.classList.add('status-paid');
+      statusBadge.textContent='bezahlt';
+    }
+    middle.appendChild(statusBadge);
+
+    const right=document.createElement('div');
+    right.innerHTML=`<strong>${fmtEuro(orderTotal(o))}</strong>`;
+
+    row.append(left,middle,right);
+    card.appendChild(row);
+
+    const items=document.createElement('div');
+    items.className='items';
+    items.style.marginTop='8px';
+
+    const grouped=new Map();
+    o.items.forEach(it=>{
+      const name=productName(it.product_id);
+      grouped.set(name,(grouped.get(name)||0)+1);
+    });
+
+    grouped.forEach((qty,name)=>{
+      const line=document.createElement('div');
+      line.className='item';
+      line.textContent=`${qty}x ${name}`;
+      items.appendChild(line);
+    });
+
+    card.appendChild(items);
+    wrap.appendChild(card);
+  });
+}
+
+/* Admin */
+async function adminInit(){ $$('.admin-tabs .tab').forEach(btn=>on(btn,'click',()=>{ $$('.admin-tabs .tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); const tab=btn.dataset.tab; $$('.admin-section').forEach(s=>s.classList.add('hidden')); if(tab==='tables'){ $('#admin-tables').classList.remove('hidden'); adminTablesLoad(); } if(tab==='products'){ $('#admin-products').classList.remove('hidden'); adminProductsLoad(); } if(tab==='report'){ $('#admin-report').classList.remove('hidden'); adminReportLoad(); } })); adminTablesLoad(); on('#btn-save-cols','click', adminSaveCols); on('#btn-save-theke-layout','click', adminSaveThekeLayout); on('#btn-apply-tables','click', adminApplyTables); on('#btn-add-product','click', adminAddProduct); on('#btn-refresh-report','click', adminReportLoad); on('#btn-reset-report','click', adminResetReport); }
+async function adminTablesLoad(){ state.config=await api('/api/config'); $('#cfg-cols').value=state.config.grid_cols??4; $('#cfg-theke-layout').value=(state.config.theke_layout??'badges'); const tables=await api('/api/tables'); $('#tbl-count').textContent=tables.length; $('#tbl-target').value=tables.length; const prev=$('#admin-tables-preview'); prev.innerHTML=''; prev.style.setProperty('--cols', Math.max(3, Math.min(6, +($('#cfg-cols').value||4)))); tables.forEach(t=>{ const b=document.createElement('button'); b.className='table-btn'; b.textContent=t.id; prev.appendChild(b); }); }
+async function adminSaveCols(){ const n=Math.max(3,Math.min(6,+($('#cfg-cols').value||4))); await api('/api/config',{method:'PUT', body:JSON.stringify({grid_cols:n})}); state.config.grid_cols=n; await adminTablesLoad(); }
+async function adminSaveThekeLayout(){ const v=$('#cfg-theke-layout').value||'badges'; await api('/api/config',{method:'PUT', body:JSON.stringify({theke_layout:v})}); state.config.theke_layout=v; await adminTablesLoad(); }
+async function adminApplyTables(){ const target=Math.max(1,Math.min(200, +($('#tbl-target').value||16))); const tables=await api('/api/tables'); const diff=target-tables.length; if(diff===0) return; if(diff>0){ for(let i=0;i<diff;i++) await api('/api/tables',{method:'POST', body:JSON.stringify({name:null})}); } else { const ids=tables.map(t=>t.id).sort((a,b)=>b-a).slice(0,-diff); for(const id of ids) await api(`/api/tables/${id}`,{method:'DELETE'}); } await adminTablesLoad(); }
+function priceToNumber(s){ if(typeof s==='number') return s; s=(s||'').toString().trim().replace('.','').replace(',','.'); return parseFloat(s)||0; }
+async function adminProductsLoad(){ const list=await api('/api/products'); state.products=list; const tbl=$('#prod-table'); tbl.innerHTML=''; const thead=document.createElement('thead'); thead.innerHTML='<tr><th style="width:78px;">Reihenfolge</th><th>ID</th><th>Name</th><th>Preis</th><th>Farbe</th><th>Aktiv</th><th>1/2</th><th></th></tr>'; tbl.appendChild(thead); const tb=document.createElement('tbody'); list.forEach((p,idx)=>{ const tr=document.createElement('tr'); tr.dataset.id=p.id; const color=p.color||'#ffffff'; tr.innerHTML=`<td><button class="btn-up" data-id="${p.id}" ${idx===0?'disabled':''}>▲</button> <button class="btn-down" data-id="${p.id}" ${idx===list.length-1?'disabled':''}>▼</button></td><td>${p.id}</td><td><input data-id="${p.id}" data-k="name" value="${p.name}"/></td><td><input data-id="${p.id}" data-k="price" value="${p.price.toFixed(2).replace('.',',')}"/></td><td><input type="color" data-id="${p.id}" data-k="color" value="${color}" class="prod-color"/></td><td style="text-align:center;"><input type="checkbox" data-id="${p.id}" data-k="active" ${p.active?'checked':''}/></td><td style="text-align:center;"><input type="checkbox" data-id="${p.id}" data-k="half" ${p.half?'checked':''}/></td><td style="text-align:right;"><button class="btn-del" data-id="${p.id}" title="Löschen" aria-label="Löschen">🗑️</button></td>`; tb.appendChild(tr); }); tbl.appendChild(tb);
+  tb.addEventListener('click', async (e)=>{ const del=e.target.closest('.btn-del'); if(del){ const id=+del.dataset.id; if(!confirm(`Produkt #${id} wirklich löschen?`)) return; await api(`/api/products/${id}`,{method:'DELETE'}); await adminProductsLoad(); return; } const up=e.target.closest('.btn-up'); const down=e.target.closest('.btn-down'); if(!up&&!down) return; const id=+(up?up.dataset.id:down.dataset.id); const row=tb.querySelector(`tr[data-id="${id}"]`); if(up){ const prev=row.previousElementSibling; if(prev) tb.insertBefore(row,prev); } else { const next=row.nextElementSibling; if(next) tb.insertBefore(next,row); } $$('#prod-table tbody tr .btn-up').forEach((b,i)=> b.disabled=(i===0)); const rows=$$('#prod-table tbody tr'); rows.forEach((r,i)=>{ const dn=r.querySelector('.btn-down'); if(dn) dn.disabled=(i===rows.length-1); }); const ids=$$('#prod-table tbody tr').map(tr=>+tr.dataset.id); await api('/api/products/order',{method:'PUT', body:JSON.stringify({order:ids})}); });
+  let lastColorInput=null;
+  $$('.prod-color').forEach(inp=>{ inp.addEventListener('focus',()=>lastColorInput=inp); inp.addEventListener('click',()=>lastColorInput=inp); });
+  $$('#fav-colors .swatch').forEach(s=> s.addEventListener('click',()=>{ const c=s.dataset.color; if(lastColorInput) lastColorInput.value=c; }));
+  on('#btn-save-all-products','click', async ()=>{ const rows=$$('#prod-table tbody tr'); const ops=[]; rows.forEach(tr=>{ const id=+tr.dataset.id; const name=$(`input[data-id="${id}"][data-k="name"]`).value.trim(); const price=priceToNumber($(`input[data-id="${id}"][data-k="price"]`).value); const active=$(`input[data-id="${id}"][data-k="active"]`).checked; const half=$(`input[data-id="${id}"][data-k="half"]`).checked; const color=$(`input[data-id="${id}"][data-k="color"]`).value||null; const cur=state.products.find(p=>p.id===id)||{}; const changed=(name!==cur.name)||(Math.abs(price-(cur.price||0))>1e-9)||(!!active!==!!cur.active)||((color||null)!==(cur.color||null))||(!!half!==!!cur.half); if(changed) ops.push(api(`/api/products/${id}`,{method:'PUT', body:JSON.stringify({name,price,active,color,half})})); }); if(ops.length===0) return alert('Keine Änderungen'); await Promise.all(ops); await adminProductsLoad(); alert('Änderungen gespeichert'); });
+}
+
+async function adminAddProduct(){ const name=$('#p-new-name').value.trim(); const price=priceToNumber($('#p-new-price').value); const color=$('#p-new-color').value||null; if(!name||!price) return alert('Name & Preis erforderlich'); await api('/api/products',{method:'POST', body:JSON.stringify({name,price,color})}); $('#p-new-name').value=''; $('#p-new-price').value=''; $('#p-new-color').value='#ffffff'; await adminProductsLoad(); }
+async function adminReportLoad(){ const rep=await api('/api/report/summary'); $('#rep-total').textContent=fmtEuro(rep.total); const tbl=$('#rep-table'); tbl.innerHTML=''; const thead=document.createElement('thead'); thead.innerHTML='<tr><th>Produkt</th><th>Anzahl</th></tr>'; tbl.appendChild(thead); const tb=document.createElement('tbody'); (rep.products||[]).forEach(r=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${r.name}</td><td>${r.qty}</td>`; tb.appendChild(tr); }); tbl.appendChild(tb); }
+async function adminResetReport(){ if(!confirm('Wirklich alle Bestellungen & Positionen dauerhaft löschen?')) return; await api('/api/report/reset',{method:'POST'}); await adminReportLoad(); }
+
+async function pollOrders(){ setInterval(async ()=>{ try{ const active=['#view-theke','#view-cash','#view-tables','#view-products','#view-admin']; if(active.some(v=>!$(v).classList.contains('hidden'))){
+        state.orders=await api('/api/orders');
+        state.sessions=await api('/api/sessions');
+        if(!$('#view-theke').classList.contains('hidden')) renderTheke();
+        if(!$('#view-cash').classList.contains('hidden')) renderCash();
+        if(!$('#view-tables').classList.contains('hidden')) renderTables();
+      } }catch{} }, 3000); }
+
+$('#app-header').classList.add('hidden');
+show('#view-login');
+
+// Wake Lock bei Sichtbarkeitswechsel reaktivieren
+document.addEventListener('visibilitychange', async ()=>{
+  if(!document.hidden && state.user && !state.wakeLock){
+    await requestWakeLock();
+  }
+});

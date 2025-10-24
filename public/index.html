@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
+  <title>Thekenflow</title>
+  <meta name="theme-color" content="#0a84ff">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Thekenflow">
+  <link rel="apple-touch-icon" href="/icons/icon-180.png">
+  <link rel="icon" href="/icons/icon-192.png" sizes="192x192">
+  <link rel="icon" href="/icons/icon-512.png" sizes="512x512">
+  <link rel="stylesheet" href="/fonts/material-symbols.css" />
+  <link rel="stylesheet" href="/styles.css"/>
+</head>
+<body>
+<header id="app-header" class="hidden">
+  <div class="left">
+    <button id="btn-logout" class="ghost"><span class="material-symbols-outlined">logout</span></button>
+    <button id="btn-back-header" class="ghost outline hidden"><span class="material-symbols-outlined">arrow_back</span></button>
+    <span id="hdr-left"></span>
+  </div>
+  <div class="center">
+    <span id="hdr-title">Login</span>
+  </div>
+  <div class="right">
+    <span id="hdr-right" class="hidden"></span>
+    <button id="btn-euro" class="ghost" title="Kassieren"><span class="material-symbols-outlined">payments</span></button>
+    <button id="btn-pos-history" class="ghost hidden" title="Letzte Bestellungen"><span class="material-symbols-outlined">history</span></button>
+    <button id="btn-pos-toggle" class="ghost hidden">POS: AUS</button>
+    <button id="btn-send-header" class="primary hidden"><span class="material-symbols-outlined">send</span></button>
+  </div>
+</header>
+
+<main id="view-login" class="view">
+  <div class="card login">
+    <img src="/tf_logo.png" alt="Logo" class="logo">
+    <div class="role-switch">
+      <button class="role active" data-role="waiter">Bedienung</button>
+      <button class="role" data-role="bar">Theke</button>
+      <button class="role" data-role="admin">Admin</button>
+    </div>
+    <div class="field" id="name-wrap">
+      <label>Dein Name</label>
+      <input id="inp-name" placeholder="z. B. Tobi" autocomplete="off"/>
+    </div>
+    <div class="field hidden" id="pin-wrap">
+      <label>PIN</label>
+      <input id="inp-pin" placeholder="••••" inputmode="numeric" maxlength="6"/>
+    </div>
+    <button id="btn-login" class="primary">Anmelden</button>
+  </div>
+</main>
+
+<main id="view-tables" class="view hidden">
+  <div id="tables-grid" class="grid tables"></div>
+</main>
+
+<main id="view-products" class="view hidden">
+  <div class="text-center muted" id="prod-table-label">Tisch</div>
+  <div id="products-grid" class="grid products"></div>
+</main>
+
+<main id="view-cash" class="view hidden">
+  <h3>Offene Bestellungen (nicht bezahlt)</h3>
+  <div id="cash-list" class="cash-list"></div>
+</main>
+
+<main id="view-cash-detail" class="view hidden">
+  <div id="cash-detail-content"></div>
+</main>
+
+<main id="view-theke" class="view hidden">
+  <div id="theke-columns" class="theke-columns"></div>
+</main>
+
+<main id="view-pos-history" class="view hidden">
+  <h3>Letzte Bestellungen</h3>
+  <div id="pos-history-list" class="pos-history-list"></div>
+</main>
+
+<main id="view-admin" class="view hidden">
+  <div class="admin-tabs">
+    <button class="tab active" data-tab="tables">Tische</button>
+    <button class="tab" data-tab="products">Produkte</button>
+    <button class="tab" data-tab="report">Auswertung</button>
+  </div>
+  <section id="admin-tables" class="admin-section">
+    <div class="admin-row">
+      <div class="admin-card">
+        <h3>Gridbreite</h3>
+        <div class="inline">
+          <label>Spalten (3–6):</label>
+          <input id="cfg-cols" type="number" min="3" max="6" value="4"/>
+          <button id="btn-save-cols" class="primary">Speichern</button>
+        </div>
+        <div class="inline">
+          <label>Layout Theke:</label>
+          <select id="cfg-theke-layout">
+            <option value="badges">Status-Badges</option>
+            <option value="background">Hintergrundfarben</option>
+          </select>
+          <button id="btn-save-theke-layout" class="outline">Speichern</button>
+        </div>
+      </div>
+      <div class="admin-card">
+        <h3>Tischanzahl</h3>
+        <div class="inline">
+          <label>Aktuell: <span id="tbl-count">0</span></label>
+          <input id="tbl-target" type="number" min="1" max="200" value="16"/>
+          <button id="btn-apply-tables" class="primary">Anpassen</button>
+        </div>
+      </div>
+    </div>
+    <div class="admin-card">
+      <h3>Vorschau Tische</h3>
+      <div id="admin-tables-preview" class="grid tables"></div>
+    </div>
+  </section>
+  <section id="admin-products" class="admin-section hidden">
+    <div class="admin-card">
+      <h3>Neues Produkt</h3>
+      <div class="inline">
+        <input id="p-new-name" placeholder="Name"/>
+        <input id="p-new-price" placeholder="Preis €" inputmode="decimal"/>
+        <input id="p-new-color" type="color" value="#ffffff" title="Farbe"/>
+        <button id="btn-add-product" class="primary">Anlegen</button>
+      </div>
+    </div>
+    <div class="admin-card">
+      <div class="inline" style="justify-content:space-between; align-items:center;">
+        <h3 style="margin:0;">Produkte (Farbe & Reihenfolge)</h3>
+        <div class="inline fav-colors" id="fav-colors">
+          <span class="muted small">Favoriten:</span>
+          <button class="swatch" data-color="#FCEFB4" style="--c:#FCEFB4"></button>
+          <button class="swatch" data-color="#C7C7C7" style="--c:#C7C7C7"></button>
+          <button class="swatch" data-color="#F6B2B5" style="--c:#F6B2B5"></button>
+          <button class="swatch" data-color="#A7C7E7" style="--c:#A7C7E7"></button>
+          <button class="swatch" data-color="#ffffff" style="--c:#ffffff"></button>
+          <button id="btn-save-all-products" class="primary">Alle speichern</button>
+        </div>
+      </div>
+      <table class="prod-table" id="prod-table"></table>
+    </div>
+  </section>
+  <section id="admin-report" class="admin-section hidden">
+    <div class="admin-card">
+      <h3>Auswertung</h3>
+      <p><strong>Gesamtumsatz:</strong> <span id="rep-total">0,00 €</span></p>
+      <table class="rep-table" id="rep-table"></table>
+      <div class="inline" style="margin-top:8px;">
+        <button id="btn-refresh-report" class="outline">Aktualisieren</button>
+        <button id="btn-reset-report" class="ghost">Zurücksetzen</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="/sw-register.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
