@@ -34,6 +34,13 @@ export function ensureInitialized(){
     console.log('Added paid column to order_items');
   }
 
+  // Add 'comment' column to order_items if not exists
+  const hasCommentColumn = db.prepare("PRAGMA table_info(order_items)").all().find(col => col.name === 'comment');
+  if(!hasCommentColumn){
+    db.exec('ALTER TABLE order_items ADD COLUMN comment TEXT');
+    console.log('Added comment column to order_items');
+  }
+
   const hasProducts = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='products'").get();
   if(!hasProducts){
     const sql = `

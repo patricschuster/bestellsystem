@@ -106,16 +106,28 @@ app.delete('/api/sessions/:waiter', (req,res)=>{
 // Orders
 app.get('/api/orders', (_req,res)=>{
   let orders=db.prepare('SELECT * FROM orders ORDER BY datetime(created_at) DESC').all();
-  const itemsStmt=db.prepare('SELECT oi.id, oi.product_id, oi.ready, oi.paid, p.name, p.price_cents FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE order_id=?');
-  res.json(orders.map(o=>({ ...o, items: itemsStmt.all(o.id).map(i=>({ id:i.id, product_id:i.product_id, name:i.name, ready:!!i.ready, paid:!!i.paid, price:i.price_cents/100 })) })));
+  const itemsStmt=db.prepare('SELECT oi.id, oi.product_id, oi.ready, oi.paid, oi.comment, p.name, p.price_cents FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE order_id=?');
+  res.json(orders.map(o=>({ ...o, items: itemsStmt.all(o.id).map(i=>({ id:i.id, product_id:i.product_id, name:i.name, ready:!!i.ready, paid:!!i.paid, price:i.price_cents/100, comment:i.comment||null })) })));
 });
 app.post('/api/orders', (req,res)=>{
-  try{ 
-    const {table_id, waiter, items}=req.body||{}; 
+  try{
+    const {table_id, waiter, items}=req.body||{};
     if(!table_id||!waiter||!Array.isArray(items)||items.length===0) return res.status(400).json({error:'table_id, waiter, items[] required'});
     const get=db.prepare('SELECT price_cents FROM products WHERE id=?');
-    const priced=[]; for(const pid of items){ const r=get.get(pid); if(!r) return res.status(400).json({error:'invalid product id', pid}); priced.push({pid,price_cents:r.price_cents}); }
-    const tx=db.transaction(()=>{ const info=db.prepare("INSERT INTO orders(table_id,waiter,status) VALUES(?,?,'open')").run(table_id, waiter); const ins=db.prepare('INSERT INTO order_items(order_id,product_id,ready,price_cents) VALUES(?,?,0,?)'); for(const {pid,price_cents} of priced) ins.run(info.lastInsertRowid,pid,price_cents); return info.lastInsertRowid; });
+    const priced=[];
+    for(const item of items){
+      const pid=typeof item==='object'?item.product_id:item;
+      const comment=typeof item==='object'?item.comment:null;
+      const r=get.get(pid);
+      if(!r) return res.status(400).json({error:'invalid product id', pid});
+      priced.push({pid,price_cents:r.price_cents,comment});
+    }
+    const tx=db.transaction(()=>{
+      const info=db.prepare("INSERT INTO orders(table_id,waiter,status) VALUES(?,?,'open')").run(table_id, waiter);
+      const ins=db.prepare('INSERT INTO order_items(order_id,product_id,ready,price_cents,comment) VALUES(?,?,0,?,?)');
+      for(const {pid,price_cents,comment} of priced) ins.run(info.lastInsertRowid,pid,price_cents,comment);
+      return info.lastInsertRowid;
+    });
     const id=tx(); res.status(201).json({id});
   }catch(e){ console.error('POST /api/orders failed:',e); res.status(500).json({error:'internal_error'}); }
 });

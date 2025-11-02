@@ -27,6 +27,9 @@
   </div>
   <div class="right">
     <span id="hdr-right" class="hidden"></span>
+    <button id="btn-fav-settings" class="ghost hidden" title="Favoriten verwalten"><span class="material-symbols-outlined">settings</span></button>
+    <button id="btn-fav-filter" class="ghost hidden" title="Nur Favoriten zeigen"><span class="material-symbols-outlined">star_outline</span></button>
+    <button id="btn-waiter-overview" class="ghost hidden" title="Bediener Übersicht"><span class="material-symbols-outlined">group</span></button>
     <button id="btn-euro" class="ghost" title="Kassieren"><span class="material-symbols-outlined">payments</span></button>
     <button id="btn-pos-history" class="ghost hidden" title="Letzte Bestellungen"><span class="material-symbols-outlined">history</span></button>
     <button id="btn-pos-toggle" class="ghost hidden">POS: AUS</button>
@@ -57,6 +60,52 @@
 <main id="view-tables" class="view hidden">
   <div id="tables-grid" class="grid tables"></div>
 </main>
+
+<div id="fav-settings-modal" class="modal hidden">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3>Meine Favoriten</h3>
+      <button id="btn-close-fav-modal" class="ghost"><span class="material-symbols-outlined">close</span></button>
+    </div>
+    <div class="modal-body" id="fav-settings-list"></div>
+    <div class="modal-footer">
+      <button id="btn-clear-all-fav" class="outline">Alle entfernen</button>
+      <button id="btn-close-fav-modal-footer" class="primary">Schließen</button>
+    </div>
+  </div>
+</div>
+
+<div id="comment-modal" class="modal hidden">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3 id="comment-product-name">Produkt</h3>
+      <button id="btn-close-comment-modal" class="ghost"><span class="material-symbols-outlined">close</span></button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label>Kommentar (optional)</label>
+        <textarea id="comment-text" placeholder="z.B. Ohne Eis, Extra scharf..." rows="4"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="btn-cancel-comment" class="outline">Abbrechen</button>
+      <button id="btn-save-comment" class="primary">Speichern</button>
+    </div>
+  </div>
+</div>
+
+<div id="waiter-overview-modal" class="modal hidden">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3>Angemeldete Bediener</h3>
+      <button id="btn-close-waiter-modal" class="ghost"><span class="material-symbols-outlined">close</span></button>
+    </div>
+    <div class="modal-body" id="waiter-overview-list"></div>
+    <div class="modal-footer">
+      <button id="btn-close-waiter-modal-footer" class="primary">Schließen</button>
+    </div>
+  </div>
+</div>
 
 <main id="view-products" class="view hidden">
   <div class="text-center muted" id="prod-table-label">Tisch</div>

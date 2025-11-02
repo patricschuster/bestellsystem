@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kommentar-Funktion Mockup - Bestellsystem v2.3.20</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 40px 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            color: white;
+            margin-bottom: 40px;
+            font-size: 32px;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        }
+
+        .mockup-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        @media (max-width: 1024px) {
+            .mockup-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .mockup-card {
+            background: white;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+
+        .mockup-title {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 16px;
+            color: #333;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .mockup-title .badge {
+            background: #667eea;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        /* Bediener-Ansicht */
+        .waiter-view {
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .waiter-view .header {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid #e5e7eb;
+        }
+
+        .product-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .product-card {
+            background: #fef3c7;
+            border: 2px solid #fbbf24;
+            border-radius: 12px;
+            padding: 16px 12px;
+            text-align: center;
+            cursor: pointer;
+            transition: transform 0.2s;
+            position: relative;
+        }
+
+        .product-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+
+        .product-card.selected {
+            background: #fbbf24;
+            border-color: #f59e0b;
+        }
+
+        .product-card .name {
+            font-weight: 700;
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+
+        .product-card .count {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            background: #ef4444;
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        /* Kommentar-Eingabe */
+        .comment-input-section {
+            background: #fff8e1;
+            border: 2px solid #ffe082;
+            border-radius: 12px;
+            padding: 16px;
+            margin: 20px 0;
+        }
+
+        .comment-input-section label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #f57c00;
+        }
+
+        .comment-input-section .material-symbols-outlined {
+            font-size: 20px;
+        }
+
+        .comment-input-section textarea {
+            width: 100%;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 10px;
+            font-family: inherit;
+            font-size: 14px;
+            resize: vertical;
+            min-height: 60px;
+        }
+
+        .comment-input-section .char-counter {
+            text-align: right;
+            font-size: 12px;
+            color: #999;
+            margin-top: 4px;
+        }
+
+        .quick-comments {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 8px;
+        }
+
+        .quick-comment-btn {
+            background: white;
+            border: 1px solid #ffe082;
+            border-radius: 16px;
+            padding: 6px 12px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .quick-comment-btn:hover {
+            background: #ffe082;
+            border-color: #ffd54f;
+        }
+
+        /* Bestellung Summary */
+        .order-summary {
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 16px;
+            margin: 20px 0;
+        }
+
+        .order-summary .title {
+            font-weight: 700;
+            margin-bottom: 12px;
+            color: #333;
+        }
+
+        .order-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #f3f4f6;
+        }
+
+        .order-total {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-top: 2px solid #e5e7eb;
+            margin-top: 8px;
+            font-weight: 700;
+            font-size: 16px;
+        }
+
+        /* Buttons */
+        .button-group {
+            display: flex;
+            gap: 12px;
+            margin-top: 16px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 14px 20px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-outline {
+            background: white;
+            border: 2px solid #e5e7eb;
+            color: #333;
+        }
+
+        .btn-outline:hover {
+            background: #f9fafb;
+        }
+
+        .btn-primary {
+            background: #10b981;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #059669;
+        }
+
+        /* Kitchen/Theke View */
+        .kitchen-view {
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .kitchen-header {
+            text-align: center;
+            font-size: 20px;
+            font-weight: 800;
+            padding: 12px;
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            margin-bottom: 16px;
+            box-shadow: 0 6px 16px rgba(0,0,0,0.06);
+        }
+
+        .order-card {
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 14px;
+            padding: 16px;
+            box-shadow: 0 6px 16px rgba(0,0,0,0.06);
+        }
+
+        .order-card .order-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .order-card .table-number {
+            font-weight: 700;
+            font-size: 16px;
+        }
+
+        .order-card .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 999px;
+            font-size: 12px;
+            color: white;
+            font-weight: 600;
+        }
+
+        .order-card .status-badge.open {
+            background: #e11d48;
+        }
+
+        .order-card .status-badge.ready {
+            background: #16a34a;
+        }
+
+        .order-card .time {
+            color: #999;
+            font-size: 12px;
+        }
+
+        /* Kommentar in Kitchen View */
+        .order-comment {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            background: #fff8e1;
+            border-left: 4px solid #ff9800;
+            padding: 12px 14px;
+            margin: 12px 0 16px 0;
+            border-radius: 6px;
+        }
+
+        .order-comment .material-symbols-outlined {
+            color: #ff9800;
+            font-size: 22px;
+            flex-shrink: 0;
+        }
+
+        .order-comment .comment-text {
+            color: #e65100;
+            font-weight: 700;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        /* Order Items */
+        .order-items {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin: 12px 0;
+        }
+
+        .order-item-line {
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .order-item-line:hover {
+            background: #f9fafb;
+        }
+
+        .order-item-line.ready {
+            background: #ecfdf5;
+            border-color: #bbf7d0;
+        }
+
+        .order-item-line .checkbox {
+            width: 20px;
+            height: 20px;
+            border: 2px solid #d1d5db;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .order-item-line.ready .checkbox {
+            background: #10b981;
+            border-color: #10b981;
+        }
+
+        .order-item-line.ready .checkbox::after {
+            content: '✓';
+            color: white;
+            font-size: 14px;
+            font-weight: 700;
+        }
+
+        /* Hybrid View */
+        .hybrid-view {
+            display: grid;
+            grid-template-columns: 30% 70%;
+            gap: 16px;
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 16px;
+            min-height: 500px;
+        }
+
+        .bediener-column {
+            border-right: 2px solid #e5e7eb;
+            padding-right: 12px;
+        }
+
+        .bediener-column .order-card {
+            margin-bottom: 16px;
+        }
+
+        .bediener-column .order-comment {
+            padding: 8px 10px;
+            margin: 8px 0 12px 0;
+        }
+
+        .bediener-column .order-comment .comment-text {
+            font-size: 12px;
+        }
+
+        .pos-column {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .pos-products {
+            flex: 1;
+            background: #fafafa;
+            border-radius: 8px;
+            padding: 12px;
+        }
+
+        .pos-checkout {
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 16px;
+        }
+
+        /* Info Box */
+        .info-box {
+            background: #eff6ff;
+            border: 2px solid #3b82f6;
+            border-radius: 12px;
+            padding: 16px;
+            margin-top: 20px;
+        }
+
+        .info-box .title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 700;
+            color: #1e40af;
+            margin-bottom: 12px;
+        }
+
+        .info-box ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .info-box li {
+            padding: 6px 0;
+            color: #1e3a8a;
+        }
+
+        .info-box li::before {
+            content: '✓';
+            color: #3b82f6;
+            font-weight: 700;
+            margin-right: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📝 Kommentar-Funktion - Bestellsystem Mockup</h1>
+
+        <div class="mockup-grid">
+            <!-- Bediener-Ansicht -->
+            <div class="mockup-card">
+                <div class="mockup-title">
+                    <span class="material-symbols-outlined">person</span>
+                    Bediener-Ansicht
+                    <span class="badge">Bestellung aufnehmen</span>
+                </div>
+
+                <div class="waiter-view">
+                    <div class="header">Bestellung - Tisch 5</div>
+
+                    <div style="font-size: 13px; font-weight: 600; margin-bottom: 10px; color: #666;">
+                        Produktauswahl:
+                    </div>
+
+                    <div class="product-grid">
+                        <div class="product-card selected">
+                            <div class="count">2</div>
+                            <div class="name">Bier Maß</div>
+                        </div>
+                        <div class="product-card selected">
+                            <div class="count">1</div>
+                            <div class="name">Cola</div>
+                        </div>
+                        <div class="product-card">
+                            <div class="name">Weizen</div>
+                        </div>
+                        <div class="product-card selected">
+                            <div class="count">1</div>
+                            <div class="name">Schnitzel</div>
+                        </div>
+                    </div>
+
+                    <!-- KOMMENTAR-EINGABE -->
+                    <div class="comment-input-section">
+                        <label>
+                            <span class="material-symbols-outlined">comment</span>
+                            Kommentar zur Bestellung (optional)
+                        </label>
+                        <textarea placeholder='z.B. "ohne Zwiebeln", "extra scharf", "Allergie: Nüsse"'>ohne Zwiebeln, extra scharf</textarea>
+                        <div class="char-counter">29/200</div>
+
+                        <div style="font-size: 11px; font-weight: 600; margin-top: 10px; margin-bottom: 6px; color: #666;">
+                            Schnellauswahl:
+                        </div>
+                        <div class="quick-comments">
+                            <button class="quick-comment-btn">ohne Zwiebeln</button>
+                            <button class="quick-comment-btn">extra scharf</button>
+                            <button class="quick-comment-btn">gut durch</button>
+                            <button class="quick-comment-btn">Allergie</button>
+                            <button class="quick-comment-btn">eilig</button>
+                        </div>
+                    </div>
+
+                    <div class="order-summary">
+                        <div class="title">Aktuelle Auswahl:</div>
+                        <div class="order-item">
+                            <span>2× Bier Maß</span>
+                            <span>10,00 €</span>
+                        </div>
+                        <div class="order-item">
+                            <span>1× Cola</span>
+                            <span>3,00 €</span>
+                        </div>
+                        <div class="order-item">
+                            <span>1× Schnitzel</span>
+                            <span>12,50 €</span>
+                        </div>
+                        <div class="order-total">
+                            <span>Gesamt:</span>
+                            <span>25,50 €</span>
+                        </div>
+                    </div>
+
+                    <div class="button-group">
+                        <button class="btn btn-outline">Abbrechen</button>
+                        <button class="btn btn-primary">Bestellung aufgeben</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Kitchen/Theke-Ansicht -->
+            <div class="mockup-card">
+                <div class="mockup-title">
+                    <span class="material-symbols-outlined">restaurant</span>
+                    Theke/Kitchen-Ansicht
+                    <span class="badge">POS:AUS</span>
+                </div>
+
+                <div class="kitchen-view">
+                    <div class="kitchen-header">Max</div>
+
+                    <div class="order-card">
+                        <div class="order-header">
+                            <div>
+                                <div class="table-number">Tisch 5</div>
+                                <div class="time">vor 8 min</div>
+                            </div>
+                            <div class="status-badge open">offen</div>
+                        </div>
+
+                        <!-- KOMMENTAR ANZEIGE -->
+                        <div class="order-comment">
+                            <span class="material-symbols-outlined">comment</span>
+                            <div class="comment-text">"ohne Zwiebeln, extra scharf"</div>
+                        </div>
+
+                        <div class="order-items">
+                            <div class="order-item-line">
+                                <div class="checkbox"></div>
+                                <span>Bier Maß</span>
+                            </div>
+                            <div class="order-item-line">
+                                <div class="checkbox"></div>
+                                <span>Bier Maß</span>
+                            </div>
+                            <div class="order-item-line">
+                                <div class="checkbox"></div>
+                                <span>Cola</span>
+                            </div>
+                            <div class="order-item-line ready">
+                                <div class="checkbox"></div>
+                                <span>Schnitzel</span>
+                            </div>
+                        </div>
+
+                        <div class="button-group">
+                            <button class="btn btn-outline">Alle bereit</button>
+                            <button class="btn btn-primary">Abgeholt</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Hybrid-Ansicht -->
+        <div class="mockup-card">
+            <div class="mockup-title">
+                <span class="material-symbols-outlined">view_column</span>
+                Hybrid-Ansicht (POS:AN + Bediener)
+                <span class="badge">30/70 Split</span>
+            </div>
+
+            <div class="hybrid-view">
+                <div class="bediener-column">
+                    <div style="font-weight: 700; text-align: center; margin-bottom: 12px;">Max</div>
+
+                    <div class="order-card">
+                        <div class="order-header">
+                            <div>
+                                <div class="table-number" style="font-size: 14px;">Tisch 5</div>
+                                <div class="time">8 min</div>
+                            </div>
+                            <div class="status-badge open" style="font-size: 10px; padding: 3px 8px;">offen</div>
+                        </div>
+
+                        <!-- Kompakter Kommentar -->
+                        <div class="order-comment">
+                            <span class="material-symbols-outlined" style="font-size: 18px;">comment</span>
+                            <div class="comment-text">"ohne Zwiebeln, extra scharf"</div>
+                        </div>
+
+                        <div class="order-items">
+                            <div class="order-item-line" style="padding: 8px; font-size: 12px;">
+                                <div class="checkbox" style="width: 16px; height: 16px;"></div>
+                                <span>Bier Maß</span>
+                            </div>
+                            <div class="order-item-line" style="padding: 8px; font-size: 12px;">
+                                <div class="checkbox" style="width: 16px; height: 16px;"></div>
+                                <span>Cola</span>
+                            </div>
+                            <div class="order-item-line ready" style="padding: 8px; font-size: 12px;">
+                                <div class="checkbox" style="width: 16px; height: 16px;"></div>
+                                <span>Schnitzel</span>
+                            </div>
+                        </div>
+
+                        <div class="button-group">
+                            <button class="btn btn-outline" style="font-size: 12px; padding: 10px;">Alle bereit</button>
+                            <button class="btn btn-primary" style="font-size: 12px; padding: 10px;">Abgeholt</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pos-column">
+                    <div class="pos-products">
+                        <div style="font-weight: 600; margin-bottom: 10px; color: #666;">Produktauswahl</div>
+                        <div class="product-grid" style="grid-template-columns: repeat(5, 1fr); gap: 8px;">
+                            <div class="product-card" style="padding: 10px; font-size: 11px;">
+                                <div class="name">Bier</div>
+                            </div>
+                            <div class="product-card" style="padding: 10px; font-size: 11px;">
+                                <div class="name">Cola</div>
+                            </div>
+                            <div class="product-card" style="padding: 10px; font-size: 11px;">
+                                <div class="name">Weizen</div>
+                            </div>
+                            <div class="product-card" style="padding: 10px; font-size: 11px;">
+                                <div class="name">Radler</div>
+                            </div>
+                            <div class="product-card" style="padding: 10px; font-size: 11px;">
+                                <div class="name">Spezi</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pos-checkout">
+                        <div style="font-weight: 700; margin-bottom: 12px;">Aktuelle Bestellung</div>
+                        <div style="color: #999; text-align: center; padding: 20px 0;">Keine Produkte ausgewählt</div>
+                        <div style="border-top: 2px solid #e5e7eb; padding-top: 12px; margin-top: 12px;">
+                            <div style="display: flex; justify-content: space-between; font-weight: 700;">
+                                <span>Gesamt:</span>
+                                <span>0,00 €</span>
+                            </div>
+                        </div>
+                        <div class="button-group" style="margin-top: 16px;">
+                            <button class="btn btn-outline">Abbrechen</button>
+                            <button class="btn btn-primary" disabled style="opacity: 0.5;">Alles kassiert</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Info Box -->
+        <div class="info-box">
+            <div class="title">
+                <span class="material-symbols-outlined">info</span>
+                Vorteile der Kommentar-Funktion
+            </div>
+            <ul>
+                <li>Wichtige Hinweise werden NICHT vergessen (Allergien, Sonderwünsche)</li>
+                <li>Gelber Hintergrund mit Icon fällt sofort auf</li>
+                <li>Kompakte Darstellung - nimmt nicht zu viel Platz weg</li>
+                <li>Optional - nur angezeigt wenn vorhanden</li>
+                <li>Quick-Buttons für häufige Kommentare (schnellere Eingabe)</li>
+                <li>200 Zeichen ausreichend für ausführliche Hinweise</li>
+                <li>Funktioniert in allen Ansichten (Bediener, Theke, POS-Hybrid)</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>
