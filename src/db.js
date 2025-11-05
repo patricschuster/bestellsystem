@@ -41,6 +41,13 @@ export function ensureInitialized(){
     console.log('Added comment column to order_items');
   }
 
+  // Add 'station' column to products if not exists
+  const hasStationColumn = db.prepare("PRAGMA table_info(products)").all().find(col => col.name === 'station');
+  if(!hasStationColumn){
+    db.exec('ALTER TABLE products ADD COLUMN station TEXT');
+    console.log('Added station column to products');
+  }
+
   const hasProducts = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='products'").get();
   if(!hasProducts){
     const sql = `

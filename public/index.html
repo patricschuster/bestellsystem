@@ -30,6 +30,7 @@
     <button id="btn-fav-settings" class="ghost hidden" title="Favoriten verwalten"><span class="material-symbols-outlined">settings</span></button>
     <button id="btn-fav-filter" class="ghost hidden" title="Nur Favoriten zeigen"><span class="material-symbols-outlined">star_outline</span></button>
     <button id="btn-waiter-overview" class="ghost hidden" title="Bediener Übersicht"><span class="material-symbols-outlined">group</span></button>
+    <button id="btn-station-select" class="ghost hidden" title="Station auswählen"><span class="material-symbols-outlined">assignment</span></button>
     <button id="btn-euro" class="ghost" title="Kassieren"><span class="material-symbols-outlined">payments</span></button>
     <button id="btn-pos-history" class="ghost hidden" title="Letzte Bestellungen"><span class="material-symbols-outlined">history</span></button>
     <button id="btn-pos-toggle" class="ghost hidden">POS: AUS</button>
@@ -107,6 +108,19 @@
   </div>
 </div>
 
+<div id="station-select-modal" class="modal hidden">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3>Station auswählen</h3>
+      <button id="btn-close-station-modal" class="ghost"><span class="material-symbols-outlined">close</span></button>
+    </div>
+    <div class="modal-body" id="station-select-list"></div>
+    <div class="modal-footer">
+      <button id="btn-close-station-modal-footer" class="primary">Schließen</button>
+    </div>
+  </div>
+</div>
+
 <main id="view-products" class="view hidden">
   <div class="text-center muted" id="prod-table-label">Tisch</div>
   <div id="products-grid" class="grid products"></div>
@@ -134,6 +148,7 @@
   <div class="admin-tabs">
     <button class="tab active" data-tab="tables">Tische</button>
     <button class="tab" data-tab="products">Produkte</button>
+    <button class="tab" data-tab="stations">Stationen</button>
     <button class="tab" data-tab="report">Auswertung</button>
   </div>
   <section id="admin-tables" class="admin-section">
@@ -192,6 +207,17 @@
         </div>
       </div>
       <table class="prod-table" id="prod-table"></table>
+    </div>
+  </section>
+  <section id="admin-stations" class="admin-section hidden">
+    <div class="admin-card">
+      <h3>Stationen verwalten</h3>
+      <p class="muted">Definieren Sie Produktionsstationen, die in der Thekenansicht einzeln angewählt werden können.</p>
+      <div class="inline">
+        <input id="station-new-name" placeholder="z.B. Küche, Grill, Bar..."/>
+        <button id="btn-add-station" class="primary">Station hinzufügen</button>
+      </div>
+      <div id="stations-list" style="margin-top:16px;"></div>
     </div>
   </section>
   <section id="admin-report" class="admin-section hidden">

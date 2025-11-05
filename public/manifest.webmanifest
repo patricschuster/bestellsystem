@@ -1,6 +1,6 @@
 {
-  "name": "Bestellsystem",
-  "short_name": "Bestellung",
+  "name": "Thekenflow",
+  "short_name": "Thekenflow",
   "display": "standalone",
   "start_url": "/",
   "theme_color": "#0a84ff",

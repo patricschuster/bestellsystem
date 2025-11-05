@@ -583,3 +583,173 @@ textarea{resize:vertical;min-height:80px}
 .order-card .item-comment .material-symbols-outlined{
   font-size:14px;
 }
+
+/* Station Mode */
+.station-mode-grid{
+  padding:0;
+  display:flex;
+  flex-direction:column;
+  height:calc(100vh - 80px);
+  overflow:hidden;
+}
+.station-mode-grid .grid.products{
+  display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));
+  gap:12px;
+  padding:12px;
+  overflow-y:auto;
+  height:100%;
+  align-content:start;
+}
+
+/* Kleine Displays Querformat (z.B. iPhone SE landscape, kleine Tablets) */
+@media (max-height:500px) and (orientation:landscape){
+  header#app-header{
+    padding:4px 8px;
+    min-height:44px;
+    margin-bottom:5px;
+  }
+  header#app-header button{
+    min-height:32px;
+    padding:4px 8px;
+  }
+  header#app-header .material-symbols-outlined{
+    font-size:18px;
+  }
+  #view-theke{
+    padding-top:10px;
+  }
+  .station-mode-grid{
+    height:calc(100vh - 44px - 5px - 10px - 5px);
+    margin-bottom:5px;
+  }
+  .station-mode-grid .grid.products{
+    grid-template-columns:repeat(4, 1fr);
+    gap:5px;
+    padding:5px;
+    height:100%;
+    grid-auto-rows:calc((100% - 10px - 5px) / 2);
+    overflow:hidden;
+  }
+  .station-product{
+    min-height:auto!important;
+    height:100%;
+    padding:10px 8px!important;
+  }
+  .station-product .name{
+    font-size:18px!important;
+    font-weight:900!important;
+  }
+  .station-product .badge{
+    font-size:24px!important;
+    width:28px!important;
+    height:28px!important;
+    line-height:28px!important;
+  }
+  .station-product div[style*="opacity"]{
+    font-size:14px!important;
+    font-weight:700!important;
+    position:absolute!important;
+    bottom:8px!important;
+    left:0!important;
+    right:0!important;
+    text-align:center!important;
+    margin-top:0!important;
+  }
+}
+
+/* Tablets Querformat - 2 Reihen optimal */
+@media (min-height:501px) and (max-height:800px) and (orientation:landscape){
+  header#app-header{
+    padding:5px 10px;
+    min-height:48px;
+    margin-bottom:5px;
+  }
+  header#app-header button{
+    min-height:36px;
+    padding:6px 10px;
+  }
+  #view-theke{
+    padding-top:10px;
+  }
+  .station-mode-grid{
+    height:calc(100vh - 48px - 5px - 10px - 5px);
+    margin-bottom:5px;
+  }
+  .station-mode-grid .grid.products{
+    grid-template-columns:repeat(4, 1fr);
+    gap:6px;
+    padding:6px;
+    height:100%;
+    grid-auto-rows:calc((100% - 12px - 6px) / 2);
+    overflow:hidden;
+  }
+  .station-product{
+    min-height:auto!important;
+    height:100%;
+  }
+  .station-product .name{
+    font-size:20px!important;
+    font-weight:900!important;
+  }
+  .station-product .badge{
+    font-size:28px!important;
+    width:32px!important;
+    height:32px!important;
+    line-height:32px!important;
+  }
+  .station-product div[style*="opacity"]{
+    font-size:15px!important;
+    font-weight:700!important;
+    position:absolute!important;
+    bottom:10px!important;
+    left:0!important;
+    right:0!important;
+    text-align:center!important;
+    margin-top:0!important;
+  }
+}
+
+/* Standard Tablets und größer */
+@media (min-width:768px) and (orientation:portrait){
+  .station-mode-grid .grid.products{
+    grid-template-columns:repeat(auto-fill, minmax(160px, 1fr));
+    gap:16px;
+  }
+}
+
+/* Desktop */
+@media (min-width:1200px){
+  .station-mode-grid .grid.products{
+    grid-template-columns:repeat(auto-fill, minmax(180px, 1fr));
+    gap:18px;
+  }
+}
+
+.station-product{
+  cursor:pointer;
+  transition:transform 0.2s, box-shadow 0.2s;
+  min-height:96px;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  align-items:center;
+  padding:12px 8px;
+}
+.station-product .badge{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.station-product:hover{
+  transform:translateY(-4px);
+  box-shadow:0 12px 24px rgba(0,0,0,.12)!important;
+}
+.station-product:active{
+  transform:translateY(-2px);
+}
+#btn-station-select.active{
+  background:var(--blue);
+  color:#fff;
+  border-color:var(--blue);
+}

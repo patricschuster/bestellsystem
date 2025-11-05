@@ -42,26 +42,26 @@ app.put('/api/config', (req,res)=>{ const tx=db.transaction(entries=>{ for(const
 
 // Products
 app.get('/api/products', (_req,res)=>{
-  const rows=db.prepare('SELECT id,name,price_cents,active,color,half FROM products').all();
-  const order=(readConfigMap().product_order)||[]; 
+  const rows=db.prepare('SELECT id,name,price_cents,active,color,half,station FROM products').all();
+  const order=(readConfigMap().product_order)||[];
   const idx=new Map(order.map((id,i)=>[id,i]));
   rows.sort((a,b) => ((idx.get(a.id) ?? 1e9) - (idx.get(b.id) ?? 1e9)) || (a.id - b.id));
   res.json(rows.map(p=>({ ...p, price: p.price_cents/100 })));
 });
 app.post('/api/products', (req,res)=>{
-  const {name,price,color,active=true,half=false}=req.body||{}; 
+  const {name,price,color,active=true,half=false,station=null}=req.body||{};
   if(!name||typeof price!=='number') return res.status(400).json({error:'name & price required'});
-  const info=db.prepare('INSERT INTO products(name,price_cents,active,color,half) VALUES(?,?,?,?,?)').run(name, Math.round(price*100), active?1:0, color||null, half?1:0);
-  const out=db.prepare('SELECT id,name,price_cents,active,color,half FROM products WHERE id=?').get(info.lastInsertRowid);
+  const info=db.prepare('INSERT INTO products(name,price_cents,active,color,half,station) VALUES(?,?,?,?,?,?)').run(name, Math.round(price*100), active?1:0, color||null, half?1:0, station);
+  const out=db.prepare('SELECT id,name,price_cents,active,color,half,station FROM products WHERE id=?').get(info.lastInsertRowid);
   const order=(readConfigMap().product_order)||[]; order.push(out.id); writeConfigEntry('product_order',order);
   res.status(201).json({ ...out, price: out.price_cents/100 });
 });
 app.put('/api/products/:id', (req,res)=>{
   const id=+req.params.id; const cur=db.prepare('SELECT * FROM products WHERE id=?').get(id); if(!cur) return res.status(404).json({error:'not found'});
-  const {name,price,active,color,half}=req.body||{};
-  db.prepare('UPDATE products SET name=?, price_cents=?, active=?, color=?, half=? WHERE id=?')
-    .run(name??cur.name, price!==undefined?Math.round(price*100):cur.price_cents, active!==undefined?(active?1:0):cur.active, color!==undefined?color:cur.color, half!==undefined?(half?1:0):cur.half, id);
-  const out=db.prepare('SELECT id,name,price_cents,active,color,half FROM products WHERE id=?').get(id);
+  const {name,price,active,color,half,station}=req.body||{};
+  db.prepare('UPDATE products SET name=?, price_cents=?, active=?, color=?, half=?, station=? WHERE id=?')
+    .run(name??cur.name, price!==undefined?Math.round(price*100):cur.price_cents, active!==undefined?(active?1:0):cur.active, color!==undefined?color:cur.color, half!==undefined?(half?1:0):cur.half, station!==undefined?station:cur.station, id);
+  const out=db.prepare('SELECT id,name,price_cents,active,color,half,station FROM products WHERE id=?').get(id);
   res.json({ ...out, price: out.price_cents/100 });
 });
 app.delete('/api/products/:id', (req,res)=>{ 

@@ -3,7 +3,7 @@ const $  = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
 const on = (sel,evt,fn)=>{ const el=(typeof sel==='string')?$(sel):sel; if(el) el.addEventListener(evt,fn); };
 
-const state={ role:'waiter', user:null, tables:[], products:[], orders:[], config:{}, version:'2.3.20', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false };
+const state={ role:'waiter', user:null, tables:[], products:[], orders:[], config:{}, version:'2.3.20', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null };
 
 async function api(path, opts={}){ const res=await fetch(path,{ headers:{'Content-Type':'application/json'}, ...opts }); if(!res.ok){ let t=await res.text(); try{ const j=JSON.parse(t); t=j.error||j.message||t; }catch{}; throw new Error(t); } return res.json(); }
 function fmtEuro(v){ return v.toFixed(2).replace('.',',')+' €'; }
@@ -39,6 +39,69 @@ function saveComment(){
   }
   closeCommentDialog();
   renderProducts();
+}
+
+/* Station Selection */
+function openStationSelect(){ renderStationSelect(); $('#station-select-modal').classList.remove('hidden'); }
+function closeStationSelect(){ $('#station-select-modal').classList.add('hidden'); }
+function renderStationSelect(){
+  const list=$('#station-select-list');
+  list.innerHTML='';
+
+  const stations=state.config.stations||[];
+
+  // Prüfen ob es überhaupt Produkte mit Stationen gibt
+  const productsWithStations=state.products.filter(p=>p.station);
+  if(productsWithStations.length===0){
+    list.innerHTML='<div class="muted text-center">Keine Stationen konfiguriert oder keine Produkte einer Station zugeordnet.</div>';
+    return;
+  }
+
+  // "Alle Bestellungen" Option
+  const allItem=document.createElement('div');
+  allItem.className='station-select-item';
+  allItem.style.padding='16px';
+  allItem.style.border='2px solid '+(state.selectedStation===null?'#0a84ff':'rgba(0,0,0,.1)');
+  allItem.style.borderRadius='8px';
+  allItem.style.marginBottom='12px';
+  allItem.style.cursor='pointer';
+  allItem.style.backgroundColor=state.selectedStation===null?'rgba(10,132,255,.05)':'transparent';
+  allItem.innerHTML='<strong>Alle Bestellungen</strong><div class="muted">Normale Thekenansicht</div>';
+  allItem.addEventListener('click',()=>{
+    state.selectedStation=null;
+    closeStationSelect();
+    renderTheke();
+    updateHeader('#view-theke');
+  });
+  list.appendChild(allItem);
+
+  // Stations-Optionen
+  stations.forEach(station=>{
+    // Nur Stationen anzeigen, die auch Produkte haben
+    const hasProducts=state.products.some(p=>p.station===station);
+    if(!hasProducts) return;
+
+    const item=document.createElement('div');
+    item.className='station-select-item';
+    item.style.padding='16px';
+    item.style.border='2px solid '+(state.selectedStation===station?'#0a84ff':'rgba(0,0,0,.1)');
+    item.style.borderRadius='8px';
+    item.style.marginBottom='12px';
+    item.style.cursor='pointer';
+    item.style.backgroundColor=state.selectedStation===station?'rgba(10,132,255,.05)':'transparent';
+
+    const productsInStation=state.products.filter(p=>p.station===station);
+    item.innerHTML=`<strong>${station}</strong><div class="muted">${productsInStation.length} Produkt${productsInStation.length!==1?'e':''}</div>`;
+
+    item.addEventListener('click',()=>{
+      state.selectedStation=station;
+      closeStationSelect();
+      renderTheke();
+      updateHeader('#view-theke');
+    });
+
+    list.appendChild(item);
+  });
 }
 
 /* Waiter Overview */
@@ -86,22 +149,33 @@ async function renderWaiterOverview(){
 
 function updateHeader(viewId){
   const titles={'#view-login':'Login','#view-tables':'Tische','#view-products':'Produkte','#view-theke':'Theke','#view-cash':'Kassieren','#view-cash-detail':'Bestellung','#view-admin':'Admin','#view-pos-history':'Letzte Bestellungen'};
-  $('#hdr-title').textContent=titles[viewId]||'Bestellsystem';
+  let title=titles[viewId]||'Bestellsystem';
+  if(viewId==='#view-theke' && state.selectedStation){
+    title=`Station: ${state.selectedStation}`;
+  }
+  $('#hdr-title').textContent=title;
   const onLogin=viewId==='#view-login';
   const isTablesView=viewId==='#view-tables';
+  const isThekeView=viewId==='#view-theke';
+
+  // Prüfen ob es Produkte mit Stationen gibt
+  const hasStationProducts=state.products.some(p=>p.station);
+
   $('#btn-logout').classList.toggle('hidden', onLogin || viewId==='#view-products' || viewId==='#view-pos-history' || viewId==='#view-cash' || viewId==='#view-cash-detail');
   $('#btn-euro').classList.toggle('hidden', !(state.role==='waiter' && !onLogin && viewId!=='#view-products' && viewId!=='#view-cash' && viewId!=='#view-cash-detail'));
   $('#btn-back-header').classList.toggle('hidden', !(viewId==='#view-products' || viewId==='#view-pos-history' || viewId==='#view-cash' || viewId==='#view-cash-detail'));
   $('#btn-send-header').classList.toggle('hidden', viewId!=='#view-products');
-  $('#btn-pos-toggle').classList.toggle('hidden', viewId!=='#view-theke' || state.role!=='bar');
-  $('#btn-pos-history').classList.toggle('hidden', !(viewId==='#view-theke' && state.role==='bar'));
+  $('#btn-pos-toggle').classList.toggle('hidden', viewId!=='#view-theke' || state.role!=='bar' || state.selectedStation!==null);
+  $('#btn-pos-history').classList.toggle('hidden', !(viewId==='#view-theke' && state.role==='bar' && state.selectedStation===null));
+  $('#btn-station-select').classList.toggle('hidden', !(state.role==='bar' && isThekeView && hasStationProducts));
+  $('#btn-station-select').classList.toggle('active', state.selectedStation!==null);
   $('#hdr-right').classList.toggle('hidden', viewId!=='#view-cash-detail');
   $('#btn-fav-settings').classList.toggle('hidden', !(state.role==='waiter' && isTablesView));
   $('#btn-fav-filter').classList.toggle('hidden', !(state.role==='waiter' && isTablesView));
   const filterIcon=$('#btn-fav-filter .material-symbols-outlined');
   if(filterIcon){ filterIcon.textContent=state.favoritesFilterActive?'star':'star_outline'; }
   $('#btn-fav-filter').classList.toggle('active', state.favoritesFilterActive);
-  $('#btn-waiter-overview').classList.toggle('hidden', !(state.role==='bar' && viewId==='#view-theke'));
+  $('#btn-waiter-overview').classList.toggle('hidden', !(state.role==='bar' && viewId==='#view-theke' && state.selectedStation===null));
   if(viewId==='#view-products'){ $('#hdr-left').textContent=''; }
   else if(state.role==='bar') $('#hdr-left').textContent='v'+state.version;
   else if(state.role==='waiter') $('#hdr-left').textContent=state.user||'';
@@ -141,6 +215,9 @@ on('#btn-save-comment','click', ()=>saveComment());
 on('#btn-waiter-overview','click', ()=>openWaiterOverview());
 on('#btn-close-waiter-modal','click', ()=>closeWaiterOverview());
 on('#btn-close-waiter-modal-footer','click', ()=>closeWaiterOverview());
+on('#btn-station-select','click', ()=>openStationSelect());
+on('#btn-close-station-modal','click', ()=>closeStationSelect());
+on('#btn-close-station-modal-footer','click', ()=>closeStationSelect());
 
 async function loadInitial(){ state.config=await api('/api/config'); state.tables=await api('/api/tables'); state.products=await api('/api/products'); state.orders=await api('/api/orders'); state.sessions=await api('/api/sessions'); }
 
@@ -557,12 +634,185 @@ function renderCashDetail(){
 /* Theke */
 function isOrderReady(o){ return o.items.length>0 && o.items.every(i=>i.ready); }
 function productName(id){ const p=state.products.find(x=>x.id===id); return p? p.name : ('P'+id); }
+function productStation(id){ const p=state.products.find(x=>x.id===id); return p? p.station : null; }
 async function renderTheke(){
-  if(state.posMode){
+  if(state.selectedStation){
+    renderStationMode();
+  } else if(state.posMode){
     renderPOSModeWithHybrid();
   } else {
     renderKitchenMode();
   }
+}
+
+function renderStationMode(){
+  const cols=$('#theke-columns');
+  cols.innerHTML='';
+  cols.className='station-mode-grid';
+
+  // Sammle alle order_items für die gewählte Station, die noch nicht bereit sind
+  const stationItems=[];
+  state.orders.filter(o=>o.status!=='picked'&&o.status!=='paid').forEach(order=>{
+    order.items.forEach(item=>{
+      const station=productStation(item.product_id);
+      if(station===state.selectedStation && !item.ready){
+        stationItems.push({
+          ...item,
+          order_id:order.id,
+          table_id:order.table_id,
+          waiter:order.waiter,
+          created_at:order.created_at
+        });
+      }
+    });
+  });
+
+  if(stationItems.length===0){
+    const empty=document.createElement('div');
+    empty.className='muted text-center';
+    empty.style.padding='32px';
+    empty.innerHTML='<h3>Keine offenen Bestellungen</h3><p>Alle Produkte für diese Station sind bereit.</p>';
+    cols.appendChild(empty);
+    return;
+  }
+
+  // Gruppiere nach Produkt-ID UND Kommentar (damit Produkte mit/ohne Kommentar separate Kacheln bekommen)
+  const grouped=new Map();
+  stationItems.forEach(item=>{
+    const key=`${item.product_id}_${item.comment||''}`;
+    if(!grouped.has(key)){
+      grouped.set(key,{
+        product_id:item.product_id,
+        name:productName(item.product_id),
+        comment:item.comment||null,
+        items:[]
+      });
+    }
+    grouped.get(key).items.push(item);
+  });
+
+  // Erstelle Produkt-Kacheln (wie in Bedienungs-Ansicht)
+  const grid=document.createElement('div');
+  grid.className='grid products';
+
+  grouped.forEach(group=>{
+    const product=state.products.find(p=>p.id===group.product_id);
+    const card=document.createElement('div');
+    card.className='product-btn product-v1 station-product';
+    card.style.position='relative';
+
+    if(product&&product.color){
+      if(product.half){
+        card.style.background=`linear-gradient(to top, ${product.color} 50%, transparent 50%)`;
+        card.style.borderColor='rgba(0,0,0,.1)';
+      } else {
+        card.style.background=product.color;
+        card.style.borderColor='rgba(0,0,0,.1)';
+        const col=contrastColor(product.color);
+        card.style.color=col;
+      }
+      card.style.boxShadow='0 6px 16px rgba(0,0,0,.08)';
+    }
+
+    const badge=document.createElement('div');
+    badge.className='badge';
+    badge.style.position='absolute';
+    badge.style.top='8px';
+    badge.style.right='8px';
+    badge.style.fontSize='27px';
+    badge.style.fontWeight='bold';
+    badge.textContent=group.items.length;
+
+    const tableNums=[...new Set(group.items.map(it=>`T${it.table_id}`))].join(', ');
+
+    // Kommentar anzeigen (falls vorhanden)
+    let commentDiv=null;
+    if(group.comment){
+      // Name-Container mit Tischnummer oben und Produktname darunter
+      const name=document.createElement('div');
+      name.className='name';
+      name.style.flex='1';
+      name.style.display='flex';
+      name.style.flexDirection='column';
+      name.style.alignItems='center';
+      name.style.justifyContent='center';
+      name.style.position='relative';
+      name.style.zIndex='1';
+      name.style.gap='4px';
+
+      const tableNumsInName=document.createElement('div');
+      tableNumsInName.textContent=tableNums;
+      tableNumsInName.style.fontSize='14px';
+      tableNumsInName.style.fontWeight='700';
+      tableNumsInName.style.opacity='0.75';
+
+      const productNameText=document.createElement('div');
+      productNameText.textContent=group.name;
+      productNameText.style.fontSize='1.5em';
+      productNameText.style.fontWeight='800';
+
+      name.append(tableNumsInName,productNameText);
+
+      commentDiv=document.createElement('div');
+      commentDiv.className='item-comment';
+      commentDiv.style.display='flex';
+      commentDiv.style.alignItems='center';
+      commentDiv.style.gap='4px';
+      commentDiv.style.fontSize='13px';
+      commentDiv.style.fontWeight='600';
+      commentDiv.style.opacity='0.85';
+      commentDiv.style.marginTop='6px';
+      commentDiv.style.padding='0 8px';
+      commentDiv.style.textAlign='center';
+      commentDiv.style.justifyContent='center';
+      commentDiv.style.fontStyle='italic';
+      commentDiv.style.position='relative';
+      commentDiv.style.zIndex='1';
+      const icon=document.createElement('span');
+      icon.className='material-symbols-outlined';
+      icon.style.fontSize='16px';
+      icon.textContent='chat_bubble';
+      commentDiv.appendChild(icon);
+      commentDiv.appendChild(document.createTextNode(group.comment));
+
+      card.append(badge,name,commentDiv);
+    } else {
+      // Standard: Name zentral, Tischnummer unten
+      const name=document.createElement('div');
+      name.className='name';
+      name.textContent=group.name;
+      name.style.fontSize='1.5em';
+      name.style.fontWeight='800';
+      name.style.flex='1';
+      name.style.display='flex';
+      name.style.alignItems='center';
+      name.style.justifyContent='center';
+      name.style.position='relative';
+      name.style.zIndex='1';
+
+      const tables=document.createElement('div');
+      tables.textContent=tableNums;
+      tables.style.fontSize='16px';
+      tables.style.opacity='0.75';
+      tables.style.textAlign='center';
+      tables.style.fontWeight='700';
+      tables.style.width='100%';
+
+      card.append(badge,name,tables);
+    }
+
+    card.addEventListener('click',async ()=>{
+      // Markiere nur das erste Item als bereit (Anzahl reduziert sich um 1)
+      const firstItem = group.items[0];
+      await api(`/api/orders/${firstItem.order_id}/items/${firstItem.id}/ready`,{method:'POST'});
+      state.orders=await api('/api/orders');
+      renderTheke();
+    });
+
+    grid.appendChild(card);
+  });
+
+  cols.appendChild(grid);
 }
 
 function renderKitchenMode(){
@@ -1180,18 +1430,75 @@ function renderPOSHistory(){
 }
 
 /* Admin */
-async function adminInit(){ $$('.admin-tabs .tab').forEach(btn=>on(btn,'click',()=>{ $$('.admin-tabs .tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); const tab=btn.dataset.tab; $$('.admin-section').forEach(s=>s.classList.add('hidden')); if(tab==='tables'){ $('#admin-tables').classList.remove('hidden'); adminTablesLoad(); } if(tab==='products'){ $('#admin-products').classList.remove('hidden'); adminProductsLoad(); } if(tab==='report'){ $('#admin-report').classList.remove('hidden'); adminReportLoad(); } })); adminTablesLoad(); on('#btn-save-cols','click', adminSaveCols); on('#btn-save-theke-layout','click', adminSaveThekeLayout); on('#btn-apply-tables','click', adminApplyTables); on('#btn-add-product','click', adminAddProduct); on('#btn-refresh-report','click', adminReportLoad); on('#btn-reset-report','click', adminResetReport); }
+async function adminInit(){ $$('.admin-tabs .tab').forEach(btn=>on(btn,'click',()=>{ $$('.admin-tabs .tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); const tab=btn.dataset.tab; $$('.admin-section').forEach(s=>s.classList.add('hidden')); if(tab==='tables'){ $('#admin-tables').classList.remove('hidden'); adminTablesLoad(); } if(tab==='products'){ $('#admin-products').classList.remove('hidden'); adminProductsLoad(); } if(tab==='stations'){ $('#admin-stations').classList.remove('hidden'); adminStationsLoad(); } if(tab==='report'){ $('#admin-report').classList.remove('hidden'); adminReportLoad(); } })); adminTablesLoad(); on('#btn-save-cols','click', adminSaveCols); on('#btn-save-theke-layout','click', adminSaveThekeLayout); on('#btn-apply-tables','click', adminApplyTables); on('#btn-add-product','click', adminAddProduct); on('#btn-add-station','click', adminAddStation); on('#btn-refresh-report','click', adminReportLoad); on('#btn-reset-report','click', adminResetReport); }
 async function adminTablesLoad(){ state.config=await api('/api/config'); $('#cfg-cols').value=state.config.grid_cols??4; $('#cfg-theke-layout').value=(state.config.theke_layout??'badges'); const tables=await api('/api/tables'); $('#tbl-count').textContent=tables.length; $('#tbl-target').value=tables.length; const prev=$('#admin-tables-preview'); prev.innerHTML=''; prev.style.setProperty('--cols', Math.max(3, Math.min(6, +($('#cfg-cols').value||4)))); tables.forEach(t=>{ const b=document.createElement('button'); b.className='table-btn'; b.textContent=t.id; prev.appendChild(b); }); }
 async function adminSaveCols(){ const n=Math.max(3,Math.min(6,+($('#cfg-cols').value||4))); await api('/api/config',{method:'PUT', body:JSON.stringify({grid_cols:n})}); state.config.grid_cols=n; await adminTablesLoad(); }
 async function adminSaveThekeLayout(){ const v=$('#cfg-theke-layout').value||'badges'; await api('/api/config',{method:'PUT', body:JSON.stringify({theke_layout:v})}); state.config.theke_layout=v; await adminTablesLoad(); }
 async function adminApplyTables(){ const target=Math.max(1,Math.min(200, +($('#tbl-target').value||16))); const tables=await api('/api/tables'); const diff=target-tables.length; if(diff===0) return; if(diff>0){ for(let i=0;i<diff;i++) await api('/api/tables',{method:'POST', body:JSON.stringify({name:null})}); } else { const ids=tables.map(t=>t.id).sort((a,b)=>b-a).slice(0,-diff); for(const id of ids) await api(`/api/tables/${id}`,{method:'DELETE'}); } await adminTablesLoad(); }
 function priceToNumber(s){ if(typeof s==='number') return s; s=(s||'').toString().trim().replace('.','').replace(',','.'); return parseFloat(s)||0; }
-async function adminProductsLoad(){ const list=await api('/api/products'); state.products=list; const tbl=$('#prod-table'); tbl.innerHTML=''; const thead=document.createElement('thead'); thead.innerHTML='<tr><th style="width:78px;">Reihenfolge</th><th>ID</th><th>Name</th><th>Preis</th><th>Farbe</th><th>Aktiv</th><th>1/2</th><th></th></tr>'; tbl.appendChild(thead); const tb=document.createElement('tbody'); list.forEach((p,idx)=>{ const tr=document.createElement('tr'); tr.dataset.id=p.id; const color=p.color||'#ffffff'; tr.innerHTML=`<td><button class="btn-up" data-id="${p.id}" ${idx===0?'disabled':''}>▲</button> <button class="btn-down" data-id="${p.id}" ${idx===list.length-1?'disabled':''}>▼</button></td><td>${p.id}</td><td><input data-id="${p.id}" data-k="name" value="${p.name}"/></td><td><input data-id="${p.id}" data-k="price" value="${p.price.toFixed(2).replace('.',',')}"/></td><td><input type="color" data-id="${p.id}" data-k="color" value="${color}" class="prod-color"/></td><td style="text-align:center;"><input type="checkbox" data-id="${p.id}" data-k="active" ${p.active?'checked':''}/></td><td style="text-align:center;"><input type="checkbox" data-id="${p.id}" data-k="half" ${p.half?'checked':''}/></td><td style="text-align:right;"><button class="btn-del" data-id="${p.id}" title="Löschen" aria-label="Löschen">🗑️</button></td>`; tb.appendChild(tr); }); tbl.appendChild(tb);
+async function adminProductsLoad(){ const list=await api('/api/products'); state.products=list; const stations=(state.config.stations||[]); const tbl=$('#prod-table'); tbl.innerHTML=''; const thead=document.createElement('thead'); thead.innerHTML='<tr><th style="width:78px;">Reihenfolge</th><th>ID</th><th>Name</th><th>Preis</th><th>Farbe</th><th>Station</th><th>Aktiv</th><th>1/2</th><th></th></tr>'; tbl.appendChild(thead); const tb=document.createElement('tbody'); list.forEach((p,idx)=>{ const tr=document.createElement('tr'); tr.dataset.id=p.id; const color=p.color||'#ffffff'; const stationOptions=`<option value="">Keine</option>${stations.map(s=>`<option value="${s}" ${p.station===s?'selected':''}>${s}</option>`).join('')}`; tr.innerHTML=`<td><button class="btn-up" data-id="${p.id}" ${idx===0?'disabled':''}>▲</button> <button class="btn-down" data-id="${p.id}" ${idx===list.length-1?'disabled':''}>▼</button></td><td>${p.id}</td><td><input data-id="${p.id}" data-k="name" value="${p.name}"/></td><td><input data-id="${p.id}" data-k="price" value="${p.price.toFixed(2).replace('.',',')}"/></td><td><input type="color" data-id="${p.id}" data-k="color" value="${color}" class="prod-color"/></td><td><select data-id="${p.id}" data-k="station">${stationOptions}</select></td><td style="text-align:center;"><input type="checkbox" data-id="${p.id}" data-k="active" ${p.active?'checked':''}/></td><td style="text-align:center;"><input type="checkbox" data-id="${p.id}" data-k="half" ${p.half?'checked':''}/></td><td style="text-align:right;"><button class="btn-del" data-id="${p.id}" title="Löschen" aria-label="Löschen">🗑️</button></td>`; tb.appendChild(tr); }); tbl.appendChild(tb);
   tb.addEventListener('click', async (e)=>{ const del=e.target.closest('.btn-del'); if(del){ const id=+del.dataset.id; if(!confirm(`Produkt #${id} wirklich löschen?`)) return; await api(`/api/products/${id}`,{method:'DELETE'}); await adminProductsLoad(); return; } const up=e.target.closest('.btn-up'); const down=e.target.closest('.btn-down'); if(!up&&!down) return; const id=+(up?up.dataset.id:down.dataset.id); const row=tb.querySelector(`tr[data-id="${id}"]`); if(up){ const prev=row.previousElementSibling; if(prev) tb.insertBefore(row,prev); } else { const next=row.nextElementSibling; if(next) tb.insertBefore(next,row); } $$('#prod-table tbody tr .btn-up').forEach((b,i)=> b.disabled=(i===0)); const rows=$$('#prod-table tbody tr'); rows.forEach((r,i)=>{ const dn=r.querySelector('.btn-down'); if(dn) dn.disabled=(i===rows.length-1); }); const ids=$$('#prod-table tbody tr').map(tr=>+tr.dataset.id); await api('/api/products/order',{method:'PUT', body:JSON.stringify({order:ids})}); });
   let lastColorInput=null;
   $$('.prod-color').forEach(inp=>{ inp.addEventListener('focus',()=>lastColorInput=inp); inp.addEventListener('click',()=>lastColorInput=inp); });
   $$('#fav-colors .swatch').forEach(s=> s.addEventListener('click',()=>{ const c=s.dataset.color; if(lastColorInput) lastColorInput.value=c; }));
-  on('#btn-save-all-products','click', async ()=>{ const rows=$$('#prod-table tbody tr'); const ops=[]; rows.forEach(tr=>{ const id=+tr.dataset.id; const name=$(`input[data-id="${id}"][data-k="name"]`).value.trim(); const price=priceToNumber($(`input[data-id="${id}"][data-k="price"]`).value); const active=$(`input[data-id="${id}"][data-k="active"]`).checked; const half=$(`input[data-id="${id}"][data-k="half"]`).checked; const color=$(`input[data-id="${id}"][data-k="color"]`).value||null; const cur=state.products.find(p=>p.id===id)||{}; const changed=(name!==cur.name)||(Math.abs(price-(cur.price||0))>1e-9)||(!!active!==!!cur.active)||((color||null)!==(cur.color||null))||(!!half!==!!cur.half); if(changed) ops.push(api(`/api/products/${id}`,{method:'PUT', body:JSON.stringify({name,price,active,color,half})})); }); if(ops.length===0) return alert('Keine Änderungen'); await Promise.all(ops); await adminProductsLoad(); alert('Änderungen gespeichert'); });
+  on('#btn-save-all-products','click', async ()=>{ const rows=$$('#prod-table tbody tr'); const ops=[]; rows.forEach(tr=>{ const id=+tr.dataset.id; const name=$(`input[data-id="${id}"][data-k="name"]`).value.trim(); const price=priceToNumber($(`input[data-id="${id}"][data-k="price"]`).value); const active=$(`input[data-id="${id}"][data-k="active"]`).checked; const half=$(`input[data-id="${id}"][data-k="half"]`).checked; const color=$(`input[data-id="${id}"][data-k="color"]`).value||null; const station=$(`select[data-id="${id}"][data-k="station"]`).value||null; const cur=state.products.find(p=>p.id===id)||{}; const changed=(name!==cur.name)||(Math.abs(price-(cur.price||0))>1e-9)||(!!active!==!!cur.active)||((color||null)!==(cur.color||null))||(!!half!==!!cur.half)||((station||null)!==(cur.station||null)); if(changed) ops.push(api(`/api/products/${id}`,{method:'PUT', body:JSON.stringify({name,price,active,color,half,station})})); }); if(ops.length===0) return alert('Keine Änderungen'); await Promise.all(ops); await adminProductsLoad(); alert('Änderungen gespeichert'); });
+}
+
+async function adminStationsLoad(){
+  state.config=await api('/api/config');
+  const stations=state.config.stations||[];
+  const list=$('#stations-list');
+  list.innerHTML='';
+
+  if(stations.length===0){
+    list.innerHTML='<div class="muted">Keine Stationen definiert</div>';
+    return;
+  }
+
+  stations.forEach(station=>{
+    const item=document.createElement('div');
+    item.className='station-item';
+    item.style.display='flex';
+    item.style.justifyContent='space-between';
+    item.style.alignItems='center';
+    item.style.padding='12px';
+    item.style.border='1px solid rgba(0,0,0,.1)';
+    item.style.borderRadius='8px';
+    item.style.marginBottom='8px';
+
+    const nameDiv=document.createElement('div');
+    nameDiv.innerHTML=`<strong>${station}</strong>`;
+
+    const deleteBtn=document.createElement('button');
+    deleteBtn.className='outline';
+    deleteBtn.textContent='Löschen';
+    deleteBtn.addEventListener('click',async ()=>{
+      if(!confirm(`Station "${station}" wirklich löschen?`)) return;
+      const newStations=stations.filter(s=>s!==station);
+      await api('/api/config',{method:'PUT', body:JSON.stringify({stations:newStations})});
+      await adminStationsLoad();
+    });
+
+    item.append(nameDiv,deleteBtn);
+    list.appendChild(item);
+  });
+}
+
+async function adminAddStation(){
+  const name=$('#station-new-name').value.trim();
+  if(!name) return alert('Bitte Stationsname eingeben');
+
+  state.config=await api('/api/config');
+  const stations=state.config.stations||[];
+
+  if(stations.includes(name)){
+    return alert('Diese Station existiert bereits');
+  }
+
+  stations.push(name);
+  await api('/api/config',{method:'PUT', body:JSON.stringify({stations})});
+  $('#station-new-name').value='';
+  await adminStationsLoad();
 }
 
 async function adminAddProduct(){ const name=$('#p-new-name').value.trim(); const price=priceToNumber($('#p-new-price').value); const color=$('#p-new-color').value||null; if(!name||!price) return alert('Name & Preis erforderlich'); await api('/api/products',{method:'POST', body:JSON.stringify({name,price,color})}); $('#p-new-name').value=''; $('#p-new-price').value=''; $('#p-new-color').value='#ffffff'; await adminProductsLoad(); }
