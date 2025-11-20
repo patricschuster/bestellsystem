@@ -28,6 +28,23 @@ function openCommentDialog(productId){
   $('#comment-modal').classList.remove('hidden');
 }
 function closeCommentDialog(){ $('#comment-modal').classList.add('hidden'); currentCommentProduct=null; }
+
+/* Change Calculator Modal */
+function openChangeModal(toPay){
+  $('#change-to-pay-amount').textContent=fmtEuro(toPay);
+  $('#change-given-input').value='';
+  $('#change-result-amount').textContent='0,00 €';
+  $('#change-result-amount').style.color='#0a84ff';
+  $('#change-modal').classList.remove('hidden');
+
+  // Store the amount to pay for calculations
+  $('#change-modal').dataset.toPay=toPay.toFixed(2);
+
+  setTimeout(()=>$('#change-given-input').focus(),100);
+}
+function closeChangeModal(){
+  $('#change-modal').classList.add('hidden');
+}
 function saveComment(){
   if(!currentCommentProduct) return;
   const comment=$('#comment-text').value.trim()||null;
@@ -176,6 +193,19 @@ function updateHeader(viewId){
   if(filterIcon){ filterIcon.textContent=state.favoritesFilterActive?'star':'star_outline'; }
   $('#btn-fav-filter').classList.toggle('active', state.favoritesFilterActive);
   $('#btn-waiter-overview').classList.toggle('hidden', !(state.role==='bar' && viewId==='#view-theke' && state.selectedStation===null));
+
+  // Update waiter count badge
+  const waiterBtn=$('#btn-waiter-overview');
+  let waiterBadge=waiterBtn.querySelector('.btn-badge');
+  if(!waiterBadge){
+    waiterBadge=document.createElement('span');
+    waiterBadge.className='btn-badge';
+    waiterBtn.appendChild(waiterBadge);
+  }
+  const waiterCount=state.sessions.filter(s=>s.waiter!=='Theke' && s.waiter!=='Admin' && s.waiter!=='POS').length;
+  waiterBadge.textContent=waiterCount;
+  waiterBadge.style.display=waiterCount>0?'':'none';
+
   if(viewId==='#view-products'){ $('#hdr-left').textContent=''; }
   else if(state.role==='bar') $('#hdr-left').textContent='v'+state.version;
   else if(state.role==='waiter') $('#hdr-left').textContent=state.user||'';
@@ -212,6 +242,51 @@ on('#btn-clear-all-fav','click', ()=>{ if(confirm('Wirklich alle Favoriten entfe
 on('#btn-close-comment-modal','click', ()=>closeCommentDialog());
 on('#btn-cancel-comment','click', ()=>closeCommentDialog());
 on('#btn-save-comment','click', ()=>saveComment());
+on('#btn-close-change-modal','click', ()=>closeChangeModal());
+on('#btn-cancel-change','click', ()=>closeChangeModal());
+on('#btn-confirm-change','click', ()=>closeChangeModal());
+
+// Change modal: Calculate change
+function calculateChangeInModal(){
+  const modal=$('#change-modal');
+  const toPay=parseFloat(modal.dataset.toPay)||0;
+  const givenInput=$('#change-given-input').value.trim().replace(',','.');
+  const given=parseFloat(givenInput)||0;
+  const change=Math.max(0,given-toPay);
+
+  const resultEl=$('#change-result-amount');
+  resultEl.textContent=fmtEuro(change);
+
+  // Color coding
+  if(given<toPay && given>0){
+    resultEl.style.color='red';
+  } else if(change===0 && given>0){
+    resultEl.style.color='green';
+  } else {
+    resultEl.style.color='#0a84ff';
+  }
+}
+
+on('#change-given-input','input',calculateChangeInModal);
+
+// Quick buttons - ADD to current value
+document.addEventListener('click',(e)=>{
+  const btn=e.target.closest('.change-quick-btn');
+  if(!btn) return;
+
+  const addValue=parseFloat(btn.dataset.value)||0;
+  const currentInput=$('#change-given-input').value.trim().replace(',','.');
+  const currentValue=parseFloat(currentInput)||0;
+  const newValue=currentValue+addValue;
+  $('#change-given-input').value=newValue.toFixed(2).replace('.',',');
+  calculateChangeInModal();
+});
+
+// Reset button
+on('#btn-reset-change-input','click',()=>{
+  $('#change-given-input').value='';
+  calculateChangeInModal();
+});
 on('#btn-waiter-overview','click', ()=>openWaiterOverview());
 on('#btn-close-waiter-modal','click', ()=>closeWaiterOverview());
 on('#btn-close-waiter-modal-footer','click', ()=>closeWaiterOverview());
@@ -590,9 +665,22 @@ function renderCashDetail(){
   summary.innerHTML=`
     <div class="summary-row"><span>Teilsumme:</span><strong>${fmtEuro(totalSelected)}</strong></div>
     <div class="summary-row"><span>Restsumme:</span><strong>${fmtEuro(totalRest)}</strong></div>
-    <div class="summary-row total"><span>Gesamt:</span><strong>${fmtEuro(totalAll)}</strong></div>
+    <div class="summary-row total">
+      <span>Gesamt:</span>
+      <button id="btn-open-change-modal" class="ghost" style="padding:4px 8px;min-height:32px;" title="Rückgeld berechnen">
+        <span class="material-symbols-outlined">calculate</span>
+      </button>
+      <strong>${fmtEuro(totalAll)}</strong>
+    </div>
   `;
   wrap.appendChild(summary);
+
+  // Open change modal
+  const openChangeBtn=$('#btn-open-change-modal');
+  openChangeBtn.addEventListener('click',()=>{
+    const toPay=totalSelected>0?totalSelected:totalAll;
+    openChangeModal(toPay);
+  });
 
   const actions=document.createElement('div');
   actions.className='cash-detail-actions';
@@ -643,6 +731,7 @@ async function renderTheke(){
   } else {
     renderKitchenMode();
   }
+  updateHeader('#view-theke');
 }
 
 function renderStationMode(){
@@ -685,17 +774,28 @@ function renderStationMode(){
         product_id:item.product_id,
         name:productName(item.product_id),
         comment:item.comment||null,
-        items:[]
+        items:[],
+        oldest_created_at:null
       });
     }
-    grouped.get(key).items.push(item);
+    const group=grouped.get(key);
+    group.items.push(item);
+    // Speichere das älteste created_at für diese Gruppe
+    if(!group.oldest_created_at || item.created_at<group.oldest_created_at){
+      group.oldest_created_at=item.created_at;
+    }
+  });
+
+  // Sortiere Gruppen nach ältestem Bestellzeitpunkt (älteste zuerst)
+  const sortedGroups=Array.from(grouped.values()).sort((a,b)=>{
+    return new Date(a.oldest_created_at) - new Date(b.oldest_created_at);
   });
 
   // Erstelle Produkt-Kacheln (wie in Bedienungs-Ansicht)
   const grid=document.createElement('div');
   grid.className='grid products';
 
-  grouped.forEach(group=>{
+  sortedGroups.forEach(group=>{
     const product=state.products.find(p=>p.id===group.product_id);
     const card=document.createElement('div');
     card.className='product-btn product-v1 station-product';
@@ -829,7 +929,18 @@ function renderKitchenMode(){
     (groups[o.waiter]=groups[o.waiter]||[]).push(o);
   });
 
-  const waiters=activeWaiters.sort();
+  // Sortierung: Bei mehr als 4 Bedienungen -> mit Bestellungen zuerst, sonst alphabetisch
+  let waiters;
+  if(activeWaiters.length>4){
+    waiters=activeWaiters.sort((a,b)=>{
+      const hasOrdersA=(groups[a]&&groups[a].length>0)?1:0;
+      const hasOrdersB=(groups[b]&&groups[b].length>0)?1:0;
+      if(hasOrdersB!==hasOrdersA) return hasOrdersB-hasOrdersA;
+      return a.localeCompare(b);
+    });
+  } else {
+    waiters=activeWaiters.sort();
+  }
 
   // Wenn nur ein Bediener, füge CSS-Klasse hinzu
   if(waiters.length===1){
@@ -912,7 +1023,7 @@ function renderKitchenMode(){
         const right=document.createElement('div');
         right.className='right';
         const allReady=document.createElement('button');
-        allReady.className='outline';
+        allReady.className='outline order-action-btn';
         allReady.textContent='Alle bereit';
         allReady.addEventListener('click', async ()=>{
           for(const it of o.items){
@@ -923,7 +1034,7 @@ function renderKitchenMode(){
         });
         left.appendChild(allReady);
         const pick=document.createElement('button');
-        pick.className='outline';
+        pick.className='outline order-action-btn';
         pick.textContent='Abgeholt';
         pick.addEventListener('click', async ()=>{
           await api(`/api/orders/${o.id}/pickup`,{method:'POST'});
@@ -1065,9 +1176,20 @@ function renderPOSOnlyMode(container){
   totalRow.className='pos-total';
   const totalLabel=document.createElement('div');
   totalLabel.innerHTML='<strong>Gesamt:</strong>';
+
+  const changeBtn=document.createElement('button');
+  changeBtn.className='ghost';
+  changeBtn.style.padding='4px 8px';
+  changeBtn.style.minHeight='32px';
+  changeBtn.title='Rückgeld berechnen';
+  changeBtn.innerHTML='<span class="material-symbols-outlined">calculate</span>';
+  changeBtn.addEventListener('click',()=>{
+    if(total>0) openChangeModal(total);
+  });
+
   const totalAmount=document.createElement('div');
   totalAmount.innerHTML=`<strong style="font-size:20px">${fmtEuro(total)}</strong>`;
-  totalRow.append(totalLabel,totalAmount);
+  totalRow.append(totalLabel,changeBtn,totalAmount);
   rightCol.appendChild(totalRow);
 
   const actions=document.createElement('div');
@@ -1081,23 +1203,48 @@ function renderPOSOnlyMode(container){
     renderTheke();
   });
 
-  const payBtn=document.createElement('button');
-  payBtn.className='primary';
-  payBtn.innerHTML='<span class="material-symbols-outlined">check</span> Alles kassiert';
-  payBtn.disabled=state.posBasket.size===0;
-  payBtn.addEventListener('click', async ()=>{
-    if(state.posBasket.size===0) return;
-    const items=[];
-    state.posBasket.forEach((q,pid)=>{ for(let i=0;i<q;i++) items.push(pid); });
-    const table=state.tables[0]?.id||1;
-    const orderRes=await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: table, waiter: 'POS', items })});
-    await api(`/api/orders/${orderRes.id}/pay`,{method:'POST'});
-    state.posBasket.clear();
-    state.orders=await api('/api/orders');
-    renderTheke();
-  });
+  // Check if station mode is active
+  const stationActive=state.selectedStation!==null;
 
-  actions.append(clearBtn,payBtn);
+  if(stationActive){
+    // Two-step process: Send -> Pay
+    const sendBtn=document.createElement('button');
+    sendBtn.className='primary';
+    sendBtn.innerHTML='<span class="material-symbols-outlined">send</span> Bestellung senden';
+    sendBtn.disabled=state.posBasket.size===0;
+    sendBtn.addEventListener('click', async ()=>{
+      if(state.posBasket.size===0) return;
+      const items=[];
+      state.posBasket.forEach((q,pid)=>{ for(let i=0;i<q;i++) items.push(pid); });
+      const table=state.tables[0]?.id||1;
+      await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: table, waiter: 'POS', items })});
+      state.posBasket.clear();
+      state.orders=await api('/api/orders');
+      renderTheke();
+    });
+
+    actions.append(clearBtn,sendBtn);
+  } else {
+    // One-step process: Pay directly (original behavior)
+    const payBtn=document.createElement('button');
+    payBtn.className='primary';
+    payBtn.innerHTML='<span class="material-symbols-outlined">check</span> Alles kassiert';
+    payBtn.disabled=state.posBasket.size===0;
+    payBtn.addEventListener('click', async ()=>{
+      if(state.posBasket.size===0) return;
+      const items=[];
+      state.posBasket.forEach((q,pid)=>{ for(let i=0;i<q;i++) items.push(pid); });
+      const table=state.tables[0]?.id||1;
+      const orderRes=await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: table, waiter: 'POS', items })});
+      await api(`/api/orders/${orderRes.id}/pay`,{method:'POST'});
+      state.posBasket.clear();
+      state.orders=await api('/api/orders');
+      renderTheke();
+    });
+
+    actions.append(clearBtn,payBtn);
+  }
+
   rightCol.appendChild(actions);
 
   container.append(leftCol,rightCol);
@@ -1114,12 +1261,27 @@ function renderBedienerColumn(container){
     }
   });
 
-  const waiters=activeWaiters.sort();
+  // Sortierung: Bei mehr als 4 Bedienungen -> mit Bestellungen zuerst, sonst alphabetisch
+  let waiters;
+  if(activeWaiters.length>4){
+    waiters=activeWaiters.sort((a,b)=>{
+      const hasOrdersA=(groups[a]&&groups[a].length>0)?1:0;
+      const hasOrdersB=(groups[b]&&groups[b].length>0)?1:0;
+      if(hasOrdersB!==hasOrdersA) return hasOrdersB-hasOrdersA;
+      return a.localeCompare(b);
+    });
+  } else {
+    waiters=activeWaiters.sort();
+  }
 
   // Bei mehreren Bedienern: Erstelle für jeden eine eigene theke-col
   // Bei einem Bediener: Nur eine theke-col
   waiters.forEach(w=>{
     const list=groups[w]||[];
+
+    // Im POS-Modus: Überspringe Bedienungen ohne offene Bestellungen
+    if(list.length===0) return;
+
     list.sort((a,b)=>a.created_at.localeCompare(b.created_at));
 
     const col=document.createElement('div');
@@ -1131,15 +1293,7 @@ function renderBedienerColumn(container){
     title.textContent=w||'—';
     col.appendChild(title);
 
-    if(list.length===0){
-      const empty=document.createElement('div');
-      empty.className='muted';
-      empty.style.padding='12px';
-      empty.style.textAlign='center';
-      empty.textContent='Keine offenen Bestellungen';
-      col.appendChild(empty);
-    } else {
-      list.forEach(o=>{
+    list.forEach(o=>{
         const card=document.createElement('div');
         card.className='order-card';
         const layout=(state.config.theke_layout||'badges');
@@ -1195,7 +1349,7 @@ function renderBedienerColumn(container){
         const right=document.createElement('div');
         right.className='right';
         const allReady=document.createElement('button');
-        allReady.className='outline';
+        allReady.className='outline order-action-btn';
         allReady.textContent='Alle bereit';
         allReady.addEventListener('click', async ()=>{
           for(const it of o.items){
@@ -1206,7 +1360,7 @@ function renderBedienerColumn(container){
         });
         left.appendChild(allReady);
         const pick=document.createElement('button');
-        pick.className='outline';
+        pick.className='outline order-action-btn';
         pick.textContent='Abgeholt';
         pick.addEventListener('click', async ()=>{
           await api(`/api/orders/${o.id}/pickup`,{method:'POST'});
@@ -1217,8 +1371,7 @@ function renderBedienerColumn(container){
         actions.append(left,right);
         card.appendChild(actions);
         col.appendChild(card);
-      });
-    }
+    });
 
     container.appendChild(col);
   });
@@ -1316,9 +1469,20 @@ function renderPOSColumn(container){
   totalRow.className='pos-total';
   const totalLabel=document.createElement('div');
   totalLabel.innerHTML='<strong>Gesamt:</strong>';
+
+  const changeBtn=document.createElement('button');
+  changeBtn.className='ghost';
+  changeBtn.style.padding='4px 8px';
+  changeBtn.style.minHeight='32px';
+  changeBtn.title='Rückgeld berechnen';
+  changeBtn.innerHTML='<span class="material-symbols-outlined">calculate</span>';
+  changeBtn.addEventListener('click',()=>{
+    if(total>0) openChangeModal(total);
+  });
+
   const totalAmount=document.createElement('div');
   totalAmount.innerHTML=`<strong style="font-size:20px">${fmtEuro(total)}</strong>`;
-  totalRow.append(totalLabel,totalAmount);
+  totalRow.append(totalLabel,changeBtn,totalAmount);
   checkoutArea.appendChild(totalRow);
 
   const actions=document.createElement('div');
@@ -1332,23 +1496,48 @@ function renderPOSColumn(container){
     renderTheke();
   });
 
-  const payBtn=document.createElement('button');
-  payBtn.className='primary';
-  payBtn.innerHTML='<span class="material-symbols-outlined">check</span> Alles kassiert';
-  payBtn.disabled=state.posBasket.size===0;
-  payBtn.addEventListener('click', async ()=>{
-    if(state.posBasket.size===0) return;
-    const items=[];
-    state.posBasket.forEach((q,pid)=>{ for(let i=0;i<q;i++) items.push(pid); });
-    const table=state.tables[0]?.id||1;
-    const orderRes=await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: table, waiter: 'POS', items })});
-    await api(`/api/orders/${orderRes.id}/pay`,{method:'POST'});
-    state.posBasket.clear();
-    state.orders=await api('/api/orders');
-    renderTheke();
-  });
+  // Check if station mode is active
+  const stationActive=state.selectedStation!==null;
 
-  actions.append(clearBtn,payBtn);
+  if(stationActive){
+    // Two-step process: Send -> Pay
+    const sendBtn=document.createElement('button');
+    sendBtn.className='primary';
+    sendBtn.innerHTML='<span class="material-symbols-outlined">send</span> Bestellung senden';
+    sendBtn.disabled=state.posBasket.size===0;
+    sendBtn.addEventListener('click', async ()=>{
+      if(state.posBasket.size===0) return;
+      const items=[];
+      state.posBasket.forEach((q,pid)=>{ for(let i=0;i<q;i++) items.push(pid); });
+      const table=state.tables[0]?.id||1;
+      await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: table, waiter: 'POS', items })});
+      state.posBasket.clear();
+      state.orders=await api('/api/orders');
+      renderTheke();
+    });
+
+    actions.append(clearBtn,sendBtn);
+  } else {
+    // One-step process: Pay directly (original behavior)
+    const payBtn=document.createElement('button');
+    payBtn.className='primary';
+    payBtn.innerHTML='<span class="material-symbols-outlined">check</span> Alles kassiert';
+    payBtn.disabled=state.posBasket.size===0;
+    payBtn.addEventListener('click', async ()=>{
+      if(state.posBasket.size===0) return;
+      const items=[];
+      state.posBasket.forEach((q,pid)=>{ for(let i=0;i<q;i++) items.push(pid); });
+      const table=state.tables[0]?.id||1;
+      const orderRes=await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: table, waiter: 'POS', items })});
+      await api(`/api/orders/${orderRes.id}/pay`,{method:'POST'});
+      state.posBasket.clear();
+      state.orders=await api('/api/orders');
+      renderTheke();
+    });
+
+    actions.append(clearBtn,payBtn);
+  }
+
   checkoutArea.appendChild(actions);
 
   container.appendChild(checkoutArea);
@@ -1430,14 +1619,14 @@ function renderPOSHistory(){
 }
 
 /* Admin */
-async function adminInit(){ $$('.admin-tabs .tab').forEach(btn=>on(btn,'click',()=>{ $$('.admin-tabs .tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); const tab=btn.dataset.tab; $$('.admin-section').forEach(s=>s.classList.add('hidden')); if(tab==='tables'){ $('#admin-tables').classList.remove('hidden'); adminTablesLoad(); } if(tab==='products'){ $('#admin-products').classList.remove('hidden'); adminProductsLoad(); } if(tab==='stations'){ $('#admin-stations').classList.remove('hidden'); adminStationsLoad(); } if(tab==='report'){ $('#admin-report').classList.remove('hidden'); adminReportLoad(); } })); adminTablesLoad(); on('#btn-save-cols','click', adminSaveCols); on('#btn-save-theke-layout','click', adminSaveThekeLayout); on('#btn-apply-tables','click', adminApplyTables); on('#btn-add-product','click', adminAddProduct); on('#btn-add-station','click', adminAddStation); on('#btn-refresh-report','click', adminReportLoad); on('#btn-reset-report','click', adminResetReport); }
+async function adminInit(){ $$('.admin-tabs .tab').forEach(btn=>on(btn,'click',()=>{ $$('.admin-tabs .tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); const tab=btn.dataset.tab; $$('.admin-section').forEach(s=>s.classList.add('hidden')); if(tab==='tables'){ $('#admin-tables').classList.remove('hidden'); adminTablesLoad(); } if(tab==='products'){ $('#admin-products').classList.remove('hidden'); adminProductsLoad(); } if(tab==='stations'){ $('#admin-stations').classList.remove('hidden'); adminStationsLoad(); } if(tab==='report'){ $('#admin-report').classList.remove('hidden'); adminReportLoad(); } if(tab==='system'){ $('#admin-system').classList.remove('hidden'); adminSystemLoad(); } })); adminTablesLoad(); on('#btn-save-cols','click', adminSaveCols); on('#btn-save-theke-layout','click', adminSaveThekeLayout); on('#btn-apply-tables','click', adminApplyTables); on('#btn-add-product','click', adminAddProduct); on('#btn-add-station','click', adminAddStation); on('#btn-refresh-report','click', adminReportLoad); on('#btn-reset-report','click', adminResetReport); on('#btn-refresh-logs','click', adminSystemLoad); }
 async function adminTablesLoad(){ state.config=await api('/api/config'); $('#cfg-cols').value=state.config.grid_cols??4; $('#cfg-theke-layout').value=(state.config.theke_layout??'badges'); const tables=await api('/api/tables'); $('#tbl-count').textContent=tables.length; $('#tbl-target').value=tables.length; const prev=$('#admin-tables-preview'); prev.innerHTML=''; prev.style.setProperty('--cols', Math.max(3, Math.min(6, +($('#cfg-cols').value||4)))); tables.forEach(t=>{ const b=document.createElement('button'); b.className='table-btn'; b.textContent=t.id; prev.appendChild(b); }); }
 async function adminSaveCols(){ const n=Math.max(3,Math.min(6,+($('#cfg-cols').value||4))); await api('/api/config',{method:'PUT', body:JSON.stringify({grid_cols:n})}); state.config.grid_cols=n; await adminTablesLoad(); }
 async function adminSaveThekeLayout(){ const v=$('#cfg-theke-layout').value||'badges'; await api('/api/config',{method:'PUT', body:JSON.stringify({theke_layout:v})}); state.config.theke_layout=v; await adminTablesLoad(); }
 async function adminApplyTables(){ const target=Math.max(1,Math.min(200, +($('#tbl-target').value||16))); const tables=await api('/api/tables'); const diff=target-tables.length; if(diff===0) return; if(diff>0){ for(let i=0;i<diff;i++) await api('/api/tables',{method:'POST', body:JSON.stringify({name:null})}); } else { const ids=tables.map(t=>t.id).sort((a,b)=>b-a).slice(0,-diff); for(const id of ids) await api(`/api/tables/${id}`,{method:'DELETE'}); } await adminTablesLoad(); }
 function priceToNumber(s){ if(typeof s==='number') return s; s=(s||'').toString().trim().replace('.','').replace(',','.'); return parseFloat(s)||0; }
 async function adminProductsLoad(){ const list=await api('/api/products'); state.products=list; const stations=(state.config.stations||[]); const tbl=$('#prod-table'); tbl.innerHTML=''; const thead=document.createElement('thead'); thead.innerHTML='<tr><th style="width:78px;">Reihenfolge</th><th>ID</th><th>Name</th><th>Preis</th><th>Farbe</th><th>Station</th><th>Aktiv</th><th>1/2</th><th></th></tr>'; tbl.appendChild(thead); const tb=document.createElement('tbody'); list.forEach((p,idx)=>{ const tr=document.createElement('tr'); tr.dataset.id=p.id; const color=p.color||'#ffffff'; const stationOptions=`<option value="">Keine</option>${stations.map(s=>`<option value="${s}" ${p.station===s?'selected':''}>${s}</option>`).join('')}`; tr.innerHTML=`<td><button class="btn-up" data-id="${p.id}" ${idx===0?'disabled':''}>▲</button> <button class="btn-down" data-id="${p.id}" ${idx===list.length-1?'disabled':''}>▼</button></td><td>${p.id}</td><td><input data-id="${p.id}" data-k="name" value="${p.name}"/></td><td><input data-id="${p.id}" data-k="price" value="${p.price.toFixed(2).replace('.',',')}"/></td><td><input type="color" data-id="${p.id}" data-k="color" value="${color}" class="prod-color"/></td><td><select data-id="${p.id}" data-k="station">${stationOptions}</select></td><td style="text-align:center;"><input type="checkbox" data-id="${p.id}" data-k="active" ${p.active?'checked':''}/></td><td style="text-align:center;"><input type="checkbox" data-id="${p.id}" data-k="half" ${p.half?'checked':''}/></td><td style="text-align:right;"><button class="btn-del" data-id="${p.id}" title="Löschen" aria-label="Löschen">🗑️</button></td>`; tb.appendChild(tr); }); tbl.appendChild(tb);
-  tb.addEventListener('click', async (e)=>{ const del=e.target.closest('.btn-del'); if(del){ const id=+del.dataset.id; if(!confirm(`Produkt #${id} wirklich löschen?`)) return; await api(`/api/products/${id}`,{method:'DELETE'}); await adminProductsLoad(); return; } const up=e.target.closest('.btn-up'); const down=e.target.closest('.btn-down'); if(!up&&!down) return; const id=+(up?up.dataset.id:down.dataset.id); const row=tb.querySelector(`tr[data-id="${id}"]`); if(up){ const prev=row.previousElementSibling; if(prev) tb.insertBefore(row,prev); } else { const next=row.nextElementSibling; if(next) tb.insertBefore(next,row); } $$('#prod-table tbody tr .btn-up').forEach((b,i)=> b.disabled=(i===0)); const rows=$$('#prod-table tbody tr'); rows.forEach((r,i)=>{ const dn=r.querySelector('.btn-down'); if(dn) dn.disabled=(i===rows.length-1); }); const ids=$$('#prod-table tbody tr').map(tr=>+tr.dataset.id); await api('/api/products/order',{method:'PUT', body:JSON.stringify({order:ids})}); });
+  tb.addEventListener('click', async (e)=>{ const del=e.target.closest('.btn-del'); if(del){ const id=+del.dataset.id; if(!confirm(`Produkt #${id} wirklich löschen?`)) return; await api(`/api/products/${id}`,{method:'DELETE'}); await adminProductsLoad(); return; } const up=e.target.closest('.btn-up'); const down=e.target.closest('.btn-down'); if(!up&&!down) return; const id=+(up?up.dataset.id:down.dataset.id); const row=tb.querySelector(`tr[data-id="${id}"]`); if(up){ const prev=row.previousElementSibling; if(prev) tb.insertBefore(row,prev); } else { const next=row.nextElementSibling; if(next) tb.insertBefore(next,row); } $$('#prod-table tbody tr .btn-up').forEach((b,i)=> b.disabled=(i===0)); const rows=$$('#prod-table tbody tr'); rows.forEach((r,i)=>{ const dn=r.querySelector('.btn-down'); if(dn) dn.disabled=(i===rows.length-1); }); const ids=$$('#prod-table tbody tr').map(tr=>+tr.dataset.id); await api('/api/products/order',{method:'PUT', body:JSON.stringify({order:ids})}); state.products=await api('/api/products'); });
   let lastColorInput=null;
   $$('.prod-color').forEach(inp=>{ inp.addEventListener('focus',()=>lastColorInput=inp); inp.addEventListener('click',()=>lastColorInput=inp); });
   $$('#fav-colors .swatch').forEach(s=> s.addEventListener('click',()=>{ const c=s.dataset.color; if(lastColorInput) lastColorInput.value=c; }));
@@ -1505,9 +1694,95 @@ async function adminAddProduct(){ const name=$('#p-new-name').value.trim(); cons
 async function adminReportLoad(){ const rep=await api('/api/report/summary'); $('#rep-total').textContent=fmtEuro(rep.total); const tbl=$('#rep-table'); tbl.innerHTML=''; const thead=document.createElement('thead'); thead.innerHTML='<tr><th>Produkt</th><th>Anzahl</th></tr>'; tbl.appendChild(thead); const tb=document.createElement('tbody'); (rep.products||[]).forEach(r=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${r.name}</td><td>${r.qty}</td>`; tb.appendChild(tr); }); tbl.appendChild(tb); }
 async function adminResetReport(){ if(!confirm('Wirklich alle Bestellungen & Positionen dauerhaft löschen?')) return; await api('/api/report/reset',{method:'POST'}); await adminReportLoad(); }
 
+async function adminSystemLoad(){
+  // Fetch system status
+  const status=await api('/api/system/status');
+  const statusDiv=$('#system-status');
+  statusDiv.innerHTML='';
+
+  // Format uptime
+  const uptime=Math.floor(status.uptime);
+  const hours=Math.floor(uptime/3600);
+  const mins=Math.floor((uptime%3600)/60);
+  const secs=uptime%60;
+  const uptimeStr=`${hours}h ${mins}m ${secs}s`;
+
+  // Render status metrics
+  const metrics=[
+    {label:'Uptime', value:uptimeStr},
+    {label:'Offene Bestellungen', value:status.orders.open},
+    {label:'Bestellpositionen (Gesamt)', value:status.orders.itemsTotal},
+    {label:'Angemeldete Bediener', value:status.sessions},
+    {label:'Aktive Produkte', value:status.products},
+    {label:'Log-Einträge', value:status.logEntries}
+  ];
+
+  metrics.forEach(m=>{
+    const item=document.createElement('div');
+    item.style.display='flex';
+    item.style.justifyContent='space-between';
+    item.style.padding='8px 0';
+    item.style.borderBottom='1px solid rgba(0,0,0,.05)';
+    item.innerHTML=`<span class="muted">${m.label}:</span><strong>${m.value}</strong>`;
+    statusDiv.appendChild(item);
+  });
+
+  // Fetch and render logs
+  const logs=await api('/api/system/logs');
+  const logsDiv=$('#system-logs');
+  logsDiv.innerHTML='';
+
+  if(logs.length===0){
+    logsDiv.innerHTML='<div class="muted">Keine Logs vorhanden</div>';
+    return;
+  }
+
+  logs.forEach(entry=>{
+    const item=document.createElement('div');
+    item.style.padding='8px';
+    item.style.marginBottom='4px';
+    item.style.borderRadius='4px';
+    item.style.fontSize='12px';
+    item.style.fontFamily='monospace';
+    item.style.borderLeft='3px solid';
+
+    // Color-code by level
+    let bgColor='rgba(0,0,0,.02)';
+    let borderColor='#888';
+    if(entry.level==='warning'){
+      bgColor='rgba(255,165,0,.1)';
+      borderColor='orange';
+    } else if(entry.level==='error'){
+      bgColor='rgba(255,0,0,.1)';
+      borderColor='red';
+    } else if(entry.level==='info'){
+      borderColor='#0a84ff';
+    }
+
+    item.style.backgroundColor=bgColor;
+    item.style.borderLeftColor=borderColor;
+
+    // Format timestamp
+    const ts=new Date(entry.timestamp);
+    const time=ts.toLocaleTimeString('de-DE');
+
+    // Build content
+    let content=`<div style="margin-bottom:4px;"><strong style="color:${borderColor};">[${entry.level.toUpperCase()}]</strong> <span class="muted">${time}</span> <strong>${entry.category}</strong></div>`;
+    content+=`<div>${entry.message}</div>`;
+
+    if(entry.data){
+      content+=`<div class="muted" style="margin-top:4px;font-size:11px;">${JSON.stringify(entry.data)}</div>`;
+    }
+
+    item.innerHTML=content;
+    logsDiv.appendChild(item);
+  });
+}
+
 async function pollOrders(){ setInterval(async ()=>{ try{ const active=['#view-theke','#view-cash','#view-tables','#view-products','#view-admin']; if(active.some(v=>!$(v).classList.contains('hidden'))){
         state.orders=await api('/api/orders');
         state.sessions=await api('/api/sessions');
+        state.products=await api('/api/products');
 
         // Check if waiter session still exists
         if(state.role==='waiter' && state.user){

@@ -21,10 +21,47 @@ app.use(express.json());
 app.use(morgan('dev'));
 app.use(cors({ origin:false }));
 
+// Logging middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    if (req.method !== 'GET' || req.path.startsWith('/api/system')) {
+      log('info', 'api', `${req.method} ${req.path}`, { status: res.statusCode, duration: `${duration}ms` });
+    }
+  });
+  next();
+});
+
 ensureInitialized();
 db.pragma('foreign_keys=ON');
 
 const ok = (res, data={}) => res.json({ ok:true, ...data });
+
+// System Logging
+const systemLog = [];
+const MAX_LOG_ENTRIES = 200;
+
+function log(level, category, message, data = null) {
+  const entry = {
+    id: Date.now() + Math.random(),
+    timestamp: new Date().toISOString(),
+    level, // 'info', 'warning', 'error'
+    category, // 'api', 'db', 'session', 'order', 'system'
+    message,
+    data
+  };
+  systemLog.push(entry);
+  if (systemLog.length > MAX_LOG_ENTRIES) systemLog.shift();
+
+  // Console output
+  const prefix = `[${level.toUpperCase()}] ${category}:`;
+  if (level === 'error') console.error(prefix, message, data || '');
+  else if (level === 'warning') console.warn(prefix, message, data || '');
+  else console.log(prefix, message, data || '');
+
+  return entry;
+}
 
 function readConfigMap(){
   const rows = db.prepare('SELECT key,value FROM config').all();
@@ -56,6 +93,13 @@ app.post('/api/products', (req,res)=>{
   const order=(readConfigMap().product_order)||[]; order.push(out.id); writeConfigEntry('product_order',order);
   res.status(201).json({ ...out, price: out.price_cents/100 });
 });
+app.put('/api/products/order', (req,res)=>{
+  const arr=(req.body&&Array.isArray(req.body.order))?req.body.order.map(x=>+x):null;
+  if(!arr) return res.status(400).json({error:'order[] required'});
+  const ids=db.prepare('SELECT id FROM products').all().map(r=>r.id);
+  writeConfigEntry('product_order', arr.filter(id=>ids.includes(id)));
+  return ok(res);
+});
 app.put('/api/products/:id', (req,res)=>{
   const id=+req.params.id; const cur=db.prepare('SELECT * FROM products WHERE id=?').get(id); if(!cur) return res.status(404).json({error:'not found'});
   const {name,price,active,color,half,station}=req.body||{};
@@ -64,19 +108,12 @@ app.put('/api/products/:id', (req,res)=>{
   const out=db.prepare('SELECT id,name,price_cents,active,color,half,station FROM products WHERE id=?').get(id);
   res.json({ ...out, price: out.price_cents/100 });
 });
-app.delete('/api/products/:id', (req,res)=>{ 
+app.delete('/api/products/:id', (req,res)=>{
   const id=+req.params.id;
-  db.prepare('DELETE FROM products WHERE id=?').run(id); 
-  const order=(readConfigMap().product_order)||[]; 
-  writeConfigEntry('product_order',order.filter(x=>x!==id)); 
-  return ok(res); 
-});
-app.put('/api/products/order', (req,res)=>{ 
-  const arr=(req.body&&Array.isArray(req.body.order))?req.body.order.map(x=>+x):null; 
-  if(!arr) return res.status(400).json({error:'order[] required'}); 
-  const ids=db.prepare('SELECT id FROM products').all().map(r=>r.id); 
-  writeConfigEntry('product_order', arr.filter(id=>ids.includes(id))); 
-  return ok(res); 
+  db.prepare('DELETE FROM products WHERE id=?').run(id);
+  const order=(readConfigMap().product_order)||[];
+  writeConfigEntry('product_order',order.filter(x=>x!==id));
+  return ok(res);
 });
 
 // Tables
@@ -100,7 +137,33 @@ app.post('/api/sessions/heartbeat', (req,res)=>{
 app.delete('/api/sessions/:waiter', (req,res)=>{
   const waiter=req.params.waiter;
   db.prepare('DELETE FROM waiter_sessions WHERE waiter=?').run(waiter);
+  log('info', 'session', `Session deleted: ${waiter}`);
   return ok(res);
+});
+
+// System Logs & Status
+app.get('/api/system/logs', (_req,res)=>{
+  res.json(systemLog.slice().reverse()); // Newest first
+});
+
+app.get('/api/system/status', (_req,res)=>{
+  const orders=db.prepare('SELECT COUNT(*) as count FROM orders WHERE status!=\'paid\'').get();
+  const orderItems=db.prepare('SELECT COUNT(*) as ready, COUNT(*) as total FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE o.status!=\'paid\'').get();
+  const sessions=db.prepare('SELECT COUNT(*) as count FROM waiter_sessions').get();
+  const products=db.prepare('SELECT COUNT(*) as count FROM products WHERE active=1').get();
+
+  res.json({
+    uptime: process.uptime(),
+    orders: {
+      open: orders.count,
+      itemsReady: orderItems.ready,
+      itemsTotal: orderItems.total
+    },
+    sessions: sessions.count,
+    products: products.count,
+    logEntries: systemLog.length,
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Orders
@@ -181,7 +244,10 @@ app.use(express.static(path.join(__dirname,'public')));
 app.get('*', (_req,res)=> res.sendFile(path.join(__dirname,'public','index.html')));
 
 // HTTP Server
-app.listen(PORT, ()=> console.log(`Bestellsystem v2.3.20 on http://localhost:${PORT}`));
+app.listen(PORT, ()=> {
+  console.log(`Bestellsystem v2.3.20 on http://localhost:${PORT}`);
+  log('info', 'system', 'Server started', { port: PORT, version: '2.3.20' });
+});
 
 // HTTPS Server (mit selbstsigniertem Zertifikat)
 const certPath = path.join(__dirname, 'certs', 'server.crt');

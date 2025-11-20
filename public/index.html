@@ -121,6 +121,45 @@
   </div>
 </div>
 
+<div id="change-modal" class="modal hidden">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3>Rückgeld berechnen</h3>
+      <button id="btn-close-change-modal" class="ghost"><span class="material-symbols-outlined">close</span></button>
+    </div>
+    <div class="modal-body">
+      <div class="change-to-pay">
+        <span class="muted">Zu kassieren:</span>
+        <strong id="change-to-pay-amount">0,00 €</strong>
+      </div>
+      <div class="change-input-row">
+        <label>Gegeben:</label>
+        <input id="change-given-input" type="text" inputmode="decimal" placeholder="0,00"/>
+        <span>€</span>
+        <button id="btn-reset-change-input" class="ghost" title="Zurücksetzen">
+          <span class="material-symbols-outlined">backspace</span>
+        </button>
+      </div>
+      <div class="change-quick-btns">
+        <button class="change-quick-btn" data-value="5">+5€</button>
+        <button class="change-quick-btn" data-value="10">+10€</button>
+        <button class="change-quick-btn" data-value="20">+20€</button>
+        <button class="change-quick-btn" data-value="50">+50€</button>
+        <button class="change-quick-btn" data-value="100">+100€</button>
+      </div>
+      <div class="change-result">
+        <span class="material-symbols-outlined">payments</span>
+        <span>Rückgeld:</span>
+        <strong id="change-result-amount">0,00 €</strong>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="btn-cancel-change" class="outline">Abbrechen</button>
+      <button id="btn-confirm-change" class="primary">OK</button>
+    </div>
+  </div>
+</div>
+
 <main id="view-products" class="view hidden">
   <div class="text-center muted" id="prod-table-label">Tisch</div>
   <div id="products-grid" class="grid products"></div>
@@ -150,6 +189,7 @@
     <button class="tab" data-tab="products">Produkte</button>
     <button class="tab" data-tab="stations">Stationen</button>
     <button class="tab" data-tab="report">Auswertung</button>
+    <button class="tab" data-tab="system">System</button>
   </div>
   <section id="admin-tables" class="admin-section">
     <div class="admin-row">
@@ -228,6 +268,18 @@
       <div class="inline" style="margin-top:8px;">
         <button id="btn-refresh-report" class="outline">Aktualisieren</button>
         <button id="btn-reset-report" class="ghost">Zurücksetzen</button>
+      </div>
+    </div>
+  </section>
+  <section id="admin-system" class="admin-section hidden">
+    <div class="admin-row">
+      <div class="admin-card">
+        <h3>System-Status</h3>
+        <div id="system-status"></div>
+      </div>
+      <div class="admin-card">
+        <h3>Live-Log <button id="btn-refresh-logs" class="ghost" style="float:right;min-height:32px;padding:4px 8px;">↻ Aktualisieren</button></h3>
+        <div id="system-logs" style="max-height:500px;overflow-y:auto;"></div>
       </div>
     </div>
   </section>

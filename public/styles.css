@@ -7,7 +7,9 @@ header#app-header{position:sticky;top:0;z-index:10;display:flex;align-items:cent
 header .left{display:flex;align-items:center;gap:8px;min-width:0;flex:1}
 header .center{font-weight:700;flex:0 0 auto;text-align:center}
 header .right{display:flex;gap:8px;flex:1;justify-content:flex-end;align-items:center}
+header .right button{position:relative}
 #hdr-right{font-size:14px;margin-right:8px}
+.btn-badge{position:absolute;top:-4px;right:-4px;width:20px;height:20px;line-height:20px;border-radius:999px;background:var(--blue);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;pointer-events:none}
 .view{padding:16px}
 button{min-height:var(--tap);padding:10px 14px;border-radius:12px;cursor:pointer;border:1px solid rgba(0,0,0,.08);background:linear-gradient(#fff,#f3f5f8);font-weight:700}
 button.primary{color:#fff;background:linear-gradient(#1990ff,#0a84ff);border-color:#0a84ff}
@@ -51,8 +53,23 @@ textarea{resize:vertical;min-height:80px}
 .cash-detail-item:hover{border-color:#0a84ff}
 .cash-detail-item.selected{background:#e6f3ff;border-color:#0a84ff}
 .cash-detail-summary{background:#f7f8fa;border-radius:12px;padding:16px;margin-bottom:16px}
-.cash-detail-summary .summary-row{display:flex;justify-content:space-between;padding:8px 0}
+.cash-detail-summary .summary-row{display:flex;justify-content:space-between;padding:8px 0;align-items:center}
 .cash-detail-summary .summary-row.total{border-top:2px solid #ddd;margin-top:8px;padding-top:12px;font-size:18px}
+.change-to-pay{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#f7f8fa;border-radius:10px;margin-bottom:16px}
+.change-to-pay .muted{font-size:14px}
+.change-to-pay strong{font-size:24px;color:var(--fg)}
+.change-input-row{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.change-input-row label{margin:0;font-weight:700;font-size:14px;color:var(--fg)}
+.change-input-row input{flex:1;text-align:right;font-size:18px;font-weight:700;border:2px solid #e5e7eb;padding:10px 12px;min-height:48px;border-radius:10px}
+.change-input-row input:focus{outline:none;border-color:#0a84ff}
+.change-input-row button{min-height:36px;padding:6px 10px}
+.change-quick-btns{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.change-quick-btn{flex:1;min-width:70px;min-height:48px;background:#f0f9ff;border:2px solid #0a84ff;color:#0a84ff;font-weight:700;font-size:16px;border-radius:10px;transition:all 0.2s}
+.change-quick-btn:hover,.change-quick-btn:active{background:#0a84ff;color:#fff;transform:scale(1.05)}
+.change-result{display:flex;align-items:center;gap:8px;padding:16px;background:#f0f9ff;border-radius:10px;justify-content:center}
+.change-result .material-symbols-outlined{font-size:28px;color:#0a84ff}
+.change-result span{font-size:16px;color:var(--muted)}
+.change-result strong{font-size:28px;font-weight:800;color:#0a84ff}
 .cash-detail-actions{display:flex;gap:12px}
 .cash-detail-actions button{flex:1}
 .cash-card .muted{font-size:12px}
@@ -183,7 +200,7 @@ textarea{resize:vertical;min-height:80px}
   white-space:nowrap;
 }
 .pos-checkout-area .pos-actions button.outline{
-  flex:0.8;
+  flex:0.33 !important;
 }
 
 .theke-columns{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
@@ -200,7 +217,7 @@ textarea{resize:vertical;min-height:80px}
 .order-card .meta{display:flex;align-items:center;gap:8px}
 .order-card .time{color:var(--muted);font-size:12px}
 .order-card .items{display:flex;flex-direction:column;gap:9px;margin-top:8px}
-.order-card .item{border:1px solid #eee;border-radius:8px;padding:9px 10px;cursor:pointer;min-height:66px;display:flex;flex-direction:column;justify-content:center;word-wrap:break-word;overflow-wrap:break-word;hyphens:auto}
+.order-card .item{border:1px solid #eee;border-radius:8px;padding:9px 10px;cursor:pointer;min-height:82.5px;display:flex;flex-direction:column;justify-content:center;word-wrap:break-word;overflow-wrap:break-word;hyphens:auto}
 .order-card .item.ready{background:#ecfdf5;border-color:#bbf7d0}
 .order-card .status{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;color:#fff}
 .order-card .status.open{background:#e11d48}
@@ -208,6 +225,8 @@ textarea{resize:vertical;min-height:80px}
 .order-card .actions{display:flex;justify-content:space-between;gap:8px;margin-top:8px}
 .order-card .actions .left{display:flex;gap:8px}
 .order-card .actions .right{display:flex;gap:8px;justify-content:flex-end}
+.order-action-btn{position:relative}
+.order-action-btn::before{content:'';position:absolute;top:-8.8px;bottom:-8.8px;left:-8.8px;right:-8.8px}
 .admin-tabs{display:flex;gap:8px;margin-bottom:12px}
 .admin-tabs .tab{flex:1}
 .admin-section .admin-card{background:#fff;border:1px solid #eee;border-radius:14px;box-shadow:0 6px 16px rgba(0,0,0,.06);padding:12px;margin-bottom:12px}
@@ -376,6 +395,18 @@ textarea{resize:vertical;min-height:80px}
 }
 .pos-actions button{
   flex:1;
+  position:relative;
+}
+.pos-actions button::before{
+  content:'';
+  position:absolute;
+  top:-16.5px;
+  bottom:-16.5px;
+  left:0;
+  right:0;
+}
+.pos-actions button.outline{
+  flex:0.33;
 }
 #btn-pos-toggle.active{
   background:var(--green);
@@ -646,16 +677,6 @@ textarea{resize:vertical;min-height:80px}
     height:28px!important;
     line-height:28px!important;
   }
-  .station-product div[style*="opacity"]{
-    font-size:14px!important;
-    font-weight:700!important;
-    position:absolute!important;
-    bottom:8px!important;
-    left:0!important;
-    right:0!important;
-    text-align:center!important;
-    margin-top:0!important;
-  }
 }
 
 /* Tablets Querformat - 2 Reihen optimal */
@@ -697,16 +718,6 @@ textarea{resize:vertical;min-height:80px}
     width:32px!important;
     height:32px!important;
     line-height:32px!important;
-  }
-  .station-product div[style*="opacity"]{
-    font-size:15px!important;
-    font-weight:700!important;
-    position:absolute!important;
-    bottom:10px!important;
-    left:0!important;
-    right:0!important;
-    text-align:center!important;
-    margin-top:0!important;
   }
 }
 
