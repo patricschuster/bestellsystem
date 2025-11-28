@@ -88,6 +88,18 @@ textarea{resize:vertical;min-height:80px}
 .bediener-column.multi-waiter .theke-col{width:50%!important;border-right:1px solid #eee;padding-right:12px;overflow-y:auto}
 .bediener-column.multi-waiter .theke-col:last-child{border-right:none;padding-right:0;padding-left:12px}
 
+/* Ab 3 Spalten (2 Bedienungen + POS): Kompakteres Layout */
+/* Action-Buttons vertikal (untereinander) */
+.bediener-column.vertical-layout .order-card .actions{flex-direction:column!important;align-items:stretch!important}
+.bediener-column.vertical-layout .order-card .actions .left,
+.bediener-column.vertical-layout .order-card .actions .right{width:100%!important;display:flex;flex-direction:column;gap:4px}
+.bediener-column.vertical-layout .order-card .actions button{width:100%!important}
+
+/* Bestellkopf: Tischname oben, Zeit + Badge darunter */
+.bediener-column.vertical-layout .order-card .row{flex-direction:column!important;align-items:center!important;gap:4px;width:100%}
+.bediener-column.vertical-layout .order-card .row .meta{width:100%;display:flex;flex-direction:row;justify-content:space-between;align-items:center;gap:8px}
+.bediener-column.vertical-layout .order-card .row .status{margin-top:0}
+
 /* Order-Cards innerhalb der Bediener-Spalte: nur Layout-Anpassungen */
 .bediener-column .theke-col{width:100%!important;max-width:100%!important;min-width:0!important}
 .bediener-column .theke-col .col-title{position:static!important;top:auto!important}
@@ -463,6 +475,10 @@ textarea{resize:vertical;min-height:80px}
 .status-badge.status-paid{
   background:#34d399;
   color:#064e3b;
+}
+.status-badge.status-open{
+  background:#9ca3af;
+  color:#1f2937;
 }
 
 /* Favorites */

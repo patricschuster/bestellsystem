@@ -191,7 +191,10 @@ app.post('/api/orders', (req,res)=>{
       for(const {pid,price_cents,comment} of priced) ins.run(info.lastInsertRowid,pid,price_cents,comment);
       return info.lastInsertRowid;
     });
-    const id=tx(); res.status(201).json({id});
+    const id=tx();
+    // Calculate total from priced items
+    const total_cents=priced.reduce((sum,p)=>sum+p.price_cents,0);
+    res.status(201).json({id, total_cents});
   }catch(e){ console.error('POST /api/orders failed:',e); res.status(500).json({error:'internal_error'}); }
 });
 app.patch('/api/orders/:id/items/:itemId/toggle-ready', (req,res)=>{ const id=+req.params.id; const itemId=+req.params.itemId; const item=db.prepare('SELECT * FROM order_items WHERE id=? AND order_id=?').get(itemId,id); if(!item) return res.status(404).json({error:'item not found'}); const nr=item.ready?0:1; db.prepare('UPDATE order_items SET ready=? WHERE id=?').run(nr,itemId); const flags=db.prepare('SELECT ready FROM order_items WHERE order_id=?').all(id).map(r=>!!r.ready); const status=(flags.length>0 && flags.every(Boolean))?'ready':'open'; db.prepare('UPDATE orders SET status=? WHERE id=?').run(status,id); return ok(res,{ready:!!nr,status}); });
@@ -213,7 +216,12 @@ app.post('/api/orders/:id/ready', (req,res)=>{
   return ok(res);
 });
 app.post('/api/orders/:id/pickup', (req,res)=>{ db.prepare("UPDATE orders SET status='picked' WHERE id=?").run(+req.params.id); return ok(res); });
-app.post('/api/orders/:id/pay', (req,res)=>{ db.prepare("UPDATE orders SET status='paid' WHERE id=?").run(+req.params.id); return ok(res); });
+app.post('/api/orders/:id/pay', (req,res)=>{
+  const orderId=+req.params.id;
+  db.prepare("UPDATE orders SET status='paid' WHERE id=?").run(orderId);
+  db.prepare("UPDATE order_items SET paid=1 WHERE order_id=?").run(orderId);
+  return ok(res);
+});
 app.post('/api/orders/:id/pay-items', (req,res)=>{
   const orderId=+req.params.id;
   const {itemIds}=req.body||{};

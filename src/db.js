@@ -27,6 +27,18 @@ export function ensureInitialized(){
     console.log('waiter_sessions table created.');
   }
 
+  // Check if station_sessions table exists, create if not
+  const hasStationSessions = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='station_sessions'").get();
+  if(!hasStationSessions){
+    db.exec(`
+      CREATE TABLE station_sessions(
+        station TEXT PRIMARY KEY,
+        last_heartbeat TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+    console.log('station_sessions table created.');
+  }
+
   // Add 'paid' column to order_items if not exists
   const hasPaidColumn = db.prepare("PRAGMA table_info(order_items)").all().find(col => col.name === 'paid');
   if(!hasPaidColumn){
@@ -46,6 +58,17 @@ export function ensureInitialized(){
   if(!hasStationColumn){
     db.exec('ALTER TABLE products ADD COLUMN station TEXT');
     console.log('Added station column to products');
+  }
+
+  // Erstelle POS-Tisch falls nicht vorhanden
+  const hasPOSTable = db.prepare("SELECT * FROM tables WHERE name='POS'").get();
+  if(!hasPOSTable){
+    // Prüfe ob tables Tabelle existiert
+    const hasTablesTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='tables'").get();
+    if(hasTablesTable){
+      db.prepare("INSERT INTO tables(name) VALUES('POS')").run();
+      console.log('POS table created.');
+    }
   }
 
   const hasProducts = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='products'").get();

@@ -4,7 +4,12 @@
       "Bash(cat:*)",
       "Bash(npm install:*)",
       "Bash(sqlite3:*)",
-      "Bash(node:*)"
+      "Bash(node:*)",
+      "Bash(docker-compose logs:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker-compose restart:*)",
+      "Bash(docker-compose exec:*)",
+      "Bash(docker exec:*)"
     ],
     "deny": [],
     "ask": []

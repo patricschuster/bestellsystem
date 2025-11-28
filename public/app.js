@@ -30,7 +30,7 @@ function openCommentDialog(productId){
 function closeCommentDialog(){ $('#comment-modal').classList.add('hidden'); currentCommentProduct=null; }
 
 /* Change Calculator Modal */
-function openChangeModal(toPay){
+function openChangeModal(toPay, orderId=null, itemIds=null){
   $('#change-to-pay-amount').textContent=fmtEuro(toPay);
   $('#change-given-input').value='';
   $('#change-result-amount').textContent='0,00 €';
@@ -39,6 +39,10 @@ function openChangeModal(toPay){
 
   // Store the amount to pay for calculations
   $('#change-modal').dataset.toPay=toPay.toFixed(2);
+
+  // Store order and item context for payment
+  $('#change-modal').dataset.orderId=orderId||'';
+  $('#change-modal').dataset.itemIds=itemIds?JSON.stringify(itemIds):'';
 
   setTimeout(()=>$('#change-given-input').focus(),100);
 }
@@ -244,7 +248,55 @@ on('#btn-cancel-comment','click', ()=>closeCommentDialog());
 on('#btn-save-comment','click', ()=>saveComment());
 on('#btn-close-change-modal','click', ()=>closeChangeModal());
 on('#btn-cancel-change','click', ()=>closeChangeModal());
-on('#btn-confirm-change','click', ()=>closeChangeModal());
+on('#btn-confirm-change','click', async ()=>{
+  const modal=$('#change-modal');
+  const orderId=modal.dataset.orderId;
+  const itemIdsJson=modal.dataset.itemIds;
+
+  try{
+    // Check if we have order context from modal
+    if(orderId && orderId!==''){
+      const itemIds=itemIdsJson?JSON.parse(itemIdsJson):null;
+
+      if(itemIds && itemIds.length>0){
+        // Partial payment: pay specific items
+        await api(`/api/orders/${orderId}/pay-items`,{method:'POST', body:JSON.stringify({itemIds})});
+      } else {
+        // Full payment: pay entire order
+        await api(`/api/orders/${orderId}/pay`,{method:'POST'});
+      }
+
+      state.orders=await api('/api/orders');
+
+      // Update cash detail view if we're in it
+      if(currentCashOrder && currentCashOrder.id==orderId){
+        currentCashOrder=state.orders.find(o=>o.id==orderId);
+        if(!currentCashOrder || currentCashOrder.status==='paid'){
+          // Order fully paid, return to cash overview
+          renderCash();
+          renderTables();
+          show('#view-cash');
+        } else {
+          // Still unpaid items, refresh detail view
+          selectedItems.clear();
+          renderCashDetail();
+        }
+      }
+    }
+
+    // Handle POS-specific cleanup
+    if(state.currentPOSOrderId){
+      state.currentPOSOrderId=null;
+      state.posBasket.clear();
+    }
+
+    renderTheke();
+  }catch(err){
+    console.error('Failed to mark order/items as paid:',err);
+  }
+
+  closeChangeModal();
+});
 
 // Change modal: Calculate change
 function calculateChangeInModal(){
@@ -342,9 +394,9 @@ function renderTables(){
   const by={};
   state.orders.filter(o=>o.status!=='paid'&&o.waiter===state.user).forEach(o=>{by[o.table_id]=(by[o.table_id]||0)+1});
 
-  let tablesToShow=state.tables;
+  let tablesToShow=state.tables.filter(t=>t.name!=='POS');
   if(state.favoritesFilterActive){
-    tablesToShow=state.tables.filter(t=>state.favorites.has(t.id));
+    tablesToShow=tablesToShow.filter(t=>state.favorites.has(t.id));
   }
 
   tablesToShow.forEach(t=>{
@@ -538,7 +590,8 @@ function renderCash(){
     const row=document.createElement('div');
     row.className='row';
     const left=document.createElement('div');
-    left.innerHTML=`<strong>Tisch ${o.table_id}</strong> · <span class="muted">${fmtAgeMinutes(o.created_at)}</span>`;
+    const tableLabel=o.waiter==='POS'?'POS':`Tisch ${o.table_id}`;
+    left.innerHTML=`<strong>${tableLabel}</strong> · <span class="muted">${fmtAgeMinutes(o.created_at)}</span>`;
     const right=document.createElement('div');
     right.style.display='flex';
     right.style.flexDirection='column';
@@ -574,7 +627,8 @@ function openCashDetail(orderId){
   renderCashDetail();
   show('#view-cash-detail');
   const hdrRight=$('#hdr-right');
-  hdrRight.innerHTML=`<strong>Tisch ${currentCashOrder.table_id}</strong> · <span class="muted">${fmtAgeMinutes(currentCashOrder.created_at)}</span>`;
+  const tableName=`Tisch ${currentCashOrder.table_id}`;
+  hdrRight.innerHTML=`<strong>${tableName}</strong> · <span class="muted">${fmtAgeMinutes(currentCashOrder.created_at)}</span>`;
   hdrRight.classList.remove('hidden');
 }
 
@@ -679,7 +733,8 @@ function renderCashDetail(){
   const openChangeBtn=$('#btn-open-change-modal');
   openChangeBtn.addEventListener('click',()=>{
     const toPay=totalSelected>0?totalSelected:totalAll;
-    openChangeModal(toPay);
+    const itemIds=selectedItems.size>0?Array.from(selectedItems):null;
+    openChangeModal(toPay, currentCashOrder.id, itemIds);
   });
 
   const actions=document.createElement('div');
@@ -724,6 +779,13 @@ function isOrderReady(o){ return o.items.length>0 && o.items.every(i=>i.ready); 
 function productName(id){ const p=state.products.find(x=>x.id===id); return p? p.name : ('P'+id); }
 function productStation(id){ const p=state.products.find(x=>x.id===id); return p? p.station : null; }
 async function renderTheke(){
+  // Speichere Scroll-Positionen aller scrollbaren Elemente
+  const scrollableElements = document.querySelectorAll('#theke-columns .theke-col, #theke-columns .bediener-column, #theke-columns .pos-column');
+  const scrollPositions = new Map();
+  scrollableElements.forEach((el, index) => {
+    scrollPositions.set(index, el.scrollTop);
+  });
+
   if(state.selectedStation){
     renderStationMode();
   } else if(state.posMode){
@@ -732,6 +794,16 @@ async function renderTheke(){
     renderKitchenMode();
   }
   updateHeader('#view-theke');
+
+  // Stelle Scroll-Positionen wieder her
+  setTimeout(() => {
+    const newScrollableElements = document.querySelectorAll('#theke-columns .theke-col, #theke-columns .bediener-column, #theke-columns .pos-column');
+    newScrollableElements.forEach((el, index) => {
+      if (scrollPositions.has(index)) {
+        el.scrollTop = scrollPositions.get(index);
+      }
+    });
+  }, 0);
 }
 
 function renderStationMode(){
@@ -741,7 +813,7 @@ function renderStationMode(){
 
   // Sammle alle order_items für die gewählte Station, die noch nicht bereit sind
   const stationItems=[];
-  state.orders.filter(o=>o.status!=='picked'&&o.status!=='paid').forEach(order=>{
+  state.orders.filter(o=>o.status!=='picked').forEach(order=>{
     order.items.forEach(item=>{
       const station=productStation(item.product_id);
       if(station===state.selectedStation && !item.ready){
@@ -823,7 +895,7 @@ function renderStationMode(){
     badge.style.fontWeight='bold';
     badge.textContent=group.items.length;
 
-    const tableNums=[...new Set(group.items.map(it=>`T${it.table_id}`))].join(', ');
+    const tableNums=[...new Set(group.items.map(it=>it.waiter==='POS'?'POS':`T${it.table_id}`))].join(', ');
 
     // Kommentar anzeigen (falls vorhanden)
     let commentDiv=null;
@@ -920,26 +992,36 @@ function renderKitchenMode(){
   cols.innerHTML='';
   cols.className='theke-columns';
 
-  // Sammle nur aktive Bediener (aus Sessions)
-  const activeWaiters=state.sessions.map(s=>s.waiter).filter(w=>w!=='POS');
+  // Sammle aktive Bediener (aus Sessions) - POS NICHT filtern
+  const activeWaiters=state.sessions.map(s=>s.waiter);
 
   // Gruppiere offene Bestellungen nach Bediener
   const groups={};
-  state.orders.filter(o=>o.status!=='picked'&&o.status!=='paid').forEach(o=>{
+  state.orders.filter(o=>{
+    if(o.status==='picked') return false;
+    if(o.waiter==='POS') return true; // POS: auch 'paid' anzeigen
+    return o.status!=='paid'; // Andere: nur wenn nicht 'paid'
+  }).forEach(o=>{
     (groups[o.waiter]=groups[o.waiter]||[]).push(o);
   });
 
+  // Füge POS hinzu, wenn POS-Bestellungen existieren
+  const allWaiters=[...activeWaiters];
+  if(groups['POS'] && groups['POS'].length>0 && !allWaiters.includes('POS')){
+    allWaiters.push('POS');
+  }
+
   // Sortierung: Bei mehr als 4 Bedienungen -> mit Bestellungen zuerst, sonst alphabetisch
   let waiters;
-  if(activeWaiters.length>4){
-    waiters=activeWaiters.sort((a,b)=>{
+  if(allWaiters.length>4){
+    waiters=allWaiters.sort((a,b)=>{
       const hasOrdersA=(groups[a]&&groups[a].length>0)?1:0;
       const hasOrdersB=(groups[b]&&groups[b].length>0)?1:0;
       if(hasOrdersB!==hasOrdersA) return hasOrdersB-hasOrdersA;
       return a.localeCompare(b);
     });
   } else {
-    waiters=activeWaiters.sort();
+    waiters=allWaiters.sort();
   }
 
   // Wenn nur ein Bediener, füge CSS-Klasse hinzu
@@ -976,7 +1058,8 @@ function renderKitchenMode(){
         const meta=document.createElement('div');
         meta.className='meta';
         const h=document.createElement('div');
-        h.innerHTML=`<strong>Tisch ${o.table_id}</strong>`;
+        const tableLabel=o.waiter==='POS'?'POS':`Tisch ${o.table_id}`;
+        h.innerHTML=`<strong>${tableLabel}</strong>`;
         const t=document.createElement('div');
         t.className='time';
         t.textContent=fmtAgeMinutes(o.created_at);
@@ -1059,219 +1142,58 @@ function renderPOSModeWithHybrid(){
   // Berechne Layout basierend auf Anzahl Bediener
   const activeBediener=state.sessions.filter(s=>s.waiter!=='Theke' && s.waiter!=='Admin').length;
 
-  if(activeBediener===0){
-    // Kein Bediener: Nur POS (altes Design)
-    cols.className='pos-layout';
-    renderPOSOnlyMode(cols);
-  } else {
-    // Hybrid-Layout
-    const layout=activeBediener===1?'30/70':'50/50';
-    cols.className=`hybrid-layout split-${layout.replace('/','-')}`;
+  // Layout-Aufteilung: 30/70 bei 0-1 Bedienungen, 50/50 bei 2+ Bedienungen
+  const layout=activeBediener>=2?'50-50':'30-70';
+  cols.className=`hybrid-layout split-${layout}`;
 
-    // Linke Spalte: Bediener-Bestellungen
-    const bedienerCol=document.createElement('div');
-    bedienerCol.className='bediener-column';
-    if(activeBediener>=2){
-      bedienerCol.classList.add('multi-waiter');
-    }
-    renderBedienerColumn(bedienerCol);
-    cols.appendChild(bedienerCol);
-
-    // Rechte Spalte: POS (50% Produkte, 50% Checkout)
-    const posCol=document.createElement('div');
-    posCol.className='pos-column';
-    renderPOSColumn(posCol);
-    cols.appendChild(posCol);
+  // Linke Spalte: Bediener-Bestellungen + POS-Bestellungen
+  const bedienerCol=document.createElement('div');
+  bedienerCol.className='bediener-column';
+  if(activeBediener>=1){
+    // Ab 1 Bedienung: zwei Spalten nebeneinander (Bedienung + POS) + vertikale Buttons
+    bedienerCol.classList.add('multi-waiter');
+    bedienerCol.classList.add('vertical-layout');
   }
-}
+  renderBedienerColumn(bedienerCol);
+  cols.appendChild(bedienerCol);
 
-function renderPOSOnlyMode(container){
-  // Links: Produkte
-  const leftCol=document.createElement('div');
-  leftCol.className='pos-products';
-  const prodGrid=document.createElement('div');
-  prodGrid.className='grid products';
-
-  state.products.filter(p=>p.active).forEach(p=>{
-    const card=document.createElement('div');
-    card.className='product-btn product-v1';
-    if(p.color){
-      if(p.half){
-        card.style.background=`linear-gradient(to top, ${p.color} 50%, transparent 50%)`;
-        card.style.borderColor='rgba(0,0,0,.1)';
-      } else {
-        card.style.background=p.color;
-        card.style.borderColor='rgba(0,0,0,.1)';
-        const col=contrastColor(p.color);
-        card.style.color=col;
-      }
-      card.style.boxShadow='0 6px 16px rgba(0,0,0,.08)';
-    }
-    const minus=document.createElement('button');
-    minus.className='minus';
-    minus.setAttribute('aria-label','Minus');
-    minus.addEventListener('click',(e)=>{
-      e.stopPropagation();
-      addPOSQty(p.id,-1);
-    });
-    const name=document.createElement('div');
-    name.className='name';
-    const parts=p.name.split(' ');
-    if(parts.length>1) name.innerHTML=parts[0]+'<br>'+parts.slice(1).join(' ');
-    else name.textContent=p.name;
-    const badge=document.createElement('div');
-    badge.className='badge';
-    badge.textContent=state.posBasket.get(p.id)||0;
-    const top=document.createElement('div');
-    top.className='topbar';
-    top.append(minus,badge);
-    card.append(top,name);
-    card.addEventListener('click',()=>{
-      addPOSQty(p.id,+1);
-      badge.textContent=state.posBasket.get(p.id)||0;
-    });
-    prodGrid.appendChild(card);
-  });
-
-  leftCol.appendChild(prodGrid);
-
-  // Rechts: Summary
-  const rightCol=document.createElement('div');
-  rightCol.className='pos-summary';
-
-  const title=document.createElement('h3');
-  title.textContent='Aktuelle Bestellung';
-  title.style.marginBottom='12px';
-  rightCol.appendChild(title);
-
-  const itemsList=document.createElement('div');
-  itemsList.className='pos-items-list';
-
-  let total=0;
-  if(state.posBasket.size===0){
-    const empty=document.createElement('div');
-    empty.className='muted';
-    empty.textContent='Keine Produkte ausgewählt';
-    itemsList.appendChild(empty);
-  } else {
-    state.posBasket.forEach((qty,pid)=>{
-      const prod=state.products.find(p=>p.id===pid);
-      if(!prod) return;
-      const item=document.createElement('div');
-      item.className='pos-item';
-      const left=document.createElement('div');
-      left.innerHTML=`<strong>${qty}x</strong> ${prod.name}`;
-      const right=document.createElement('div');
-      const itemTotal=(prod.price_cents/100)*qty;
-      total+=itemTotal;
-      right.innerHTML=`<strong>${fmtEuro(itemTotal)}</strong>`;
-      item.append(left,right);
-      itemsList.appendChild(item);
-    });
-  }
-
-  rightCol.appendChild(itemsList);
-
-  const totalRow=document.createElement('div');
-  totalRow.className='pos-total';
-  const totalLabel=document.createElement('div');
-  totalLabel.innerHTML='<strong>Gesamt:</strong>';
-
-  const changeBtn=document.createElement('button');
-  changeBtn.className='ghost';
-  changeBtn.style.padding='4px 8px';
-  changeBtn.style.minHeight='32px';
-  changeBtn.title='Rückgeld berechnen';
-  changeBtn.innerHTML='<span class="material-symbols-outlined">calculate</span>';
-  changeBtn.addEventListener('click',()=>{
-    if(total>0) openChangeModal(total);
-  });
-
-  const totalAmount=document.createElement('div');
-  totalAmount.innerHTML=`<strong style="font-size:20px">${fmtEuro(total)}</strong>`;
-  totalRow.append(totalLabel,changeBtn,totalAmount);
-  rightCol.appendChild(totalRow);
-
-  const actions=document.createElement('div');
-  actions.className='pos-actions';
-
-  const clearBtn=document.createElement('button');
-  clearBtn.className='outline';
-  clearBtn.textContent='Abbrechen';
-  clearBtn.addEventListener('click',()=>{
-    state.posBasket.clear();
-    renderTheke();
-  });
-
-  // Check if station mode is active
-  const stationActive=state.selectedStation!==null;
-
-  if(stationActive){
-    // Two-step process: Send -> Pay
-    const sendBtn=document.createElement('button');
-    sendBtn.className='primary';
-    sendBtn.innerHTML='<span class="material-symbols-outlined">send</span> Bestellung senden';
-    sendBtn.disabled=state.posBasket.size===0;
-    sendBtn.addEventListener('click', async ()=>{
-      if(state.posBasket.size===0) return;
-      const items=[];
-      state.posBasket.forEach((q,pid)=>{ for(let i=0;i<q;i++) items.push(pid); });
-      const table=state.tables[0]?.id||1;
-      await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: table, waiter: 'POS', items })});
-      state.posBasket.clear();
-      state.orders=await api('/api/orders');
-      renderTheke();
-    });
-
-    actions.append(clearBtn,sendBtn);
-  } else {
-    // One-step process: Pay directly (original behavior)
-    const payBtn=document.createElement('button');
-    payBtn.className='primary';
-    payBtn.innerHTML='<span class="material-symbols-outlined">check</span> Alles kassiert';
-    payBtn.disabled=state.posBasket.size===0;
-    payBtn.addEventListener('click', async ()=>{
-      if(state.posBasket.size===0) return;
-      const items=[];
-      state.posBasket.forEach((q,pid)=>{ for(let i=0;i<q;i++) items.push(pid); });
-      const table=state.tables[0]?.id||1;
-      const orderRes=await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: table, waiter: 'POS', items })});
-      await api(`/api/orders/${orderRes.id}/pay`,{method:'POST'});
-      state.posBasket.clear();
-      state.orders=await api('/api/orders');
-      renderTheke();
-    });
-
-    actions.append(clearBtn,payBtn);
-  }
-
-  rightCol.appendChild(actions);
-
-  container.append(leftCol,rightCol);
+  // Rechte Spalte: POS (Produkte + Checkout)
+  const posCol=document.createElement('div');
+  posCol.className='pos-column';
+  renderPOSColumn(posCol);
+  cols.appendChild(posCol);
 }
 
 function renderBedienerColumn(container){
   // Verwende exakt die gleiche Logik wie Kitchen Mode, aber ohne .theke-columns Wrapper
-  const activeWaiters=state.sessions.filter(s=>s.waiter!=='Theke' && s.waiter!=='Admin' && s.waiter!=='POS').map(s=>s.waiter);
+  const activeWaiters=state.sessions.filter(s=>s.waiter!=='Theke' && s.waiter!=='Admin').map(s=>s.waiter);
 
   const groups={};
-  state.orders.filter(o=>o.status!=='picked'&&o.status!=='paid').forEach(o=>{
-    if(activeWaiters.includes(o.waiter)){
-      (groups[o.waiter]=groups[o.waiter]||[]).push(o);
-    }
+  state.orders.filter(o=>{
+    if(o.status==='picked') return false;
+    if(o.waiter==='POS') return true; // POS: auch 'paid' anzeigen
+    return o.status!=='paid'; // Andere: nur wenn nicht 'paid'
+  }).forEach(o=>{
+    (groups[o.waiter]=groups[o.waiter]||[]).push(o);
   });
+
+  // Füge POS hinzu, wenn POS-Bestellungen existieren
+  const allWaiters=[...activeWaiters];
+  if(groups['POS'] && groups['POS'].length>0 && !allWaiters.includes('POS')){
+    allWaiters.push('POS');
+  }
 
   // Sortierung: Bei mehr als 4 Bedienungen -> mit Bestellungen zuerst, sonst alphabetisch
   let waiters;
-  if(activeWaiters.length>4){
-    waiters=activeWaiters.sort((a,b)=>{
+  if(allWaiters.length>4){
+    waiters=allWaiters.sort((a,b)=>{
       const hasOrdersA=(groups[a]&&groups[a].length>0)?1:0;
       const hasOrdersB=(groups[b]&&groups[b].length>0)?1:0;
       if(hasOrdersB!==hasOrdersA) return hasOrdersB-hasOrdersA;
       return a.localeCompare(b);
     });
   } else {
-    waiters=activeWaiters.sort();
+    waiters=allWaiters.sort();
   }
 
   // Bei mehreren Bedienern: Erstelle für jeden eine eigene theke-col
@@ -1302,7 +1224,8 @@ function renderBedienerColumn(container){
         const meta=document.createElement('div');
         meta.className='meta';
         const h=document.createElement('div');
-        h.innerHTML=`<strong>Tisch ${o.table_id}</strong>`;
+        const tableLabel=o.waiter==='POS'?'POS':`Tisch ${o.table_id}`;
+        h.innerHTML=`<strong>${tableLabel}</strong>`;
         const t=document.createElement('div');
         t.className='time';
         t.textContent=fmtAgeMinutes(o.created_at);
@@ -1509,10 +1432,13 @@ function renderPOSColumn(container){
       if(state.posBasket.size===0) return;
       const items=[];
       state.posBasket.forEach((q,pid)=>{ for(let i=0;i<q;i++) items.push(pid); });
-      const table=state.tables[0]?.id||1;
-      await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: table, waiter: 'POS', items })});
-      state.posBasket.clear();
+      const posTable=state.tables.find(t=>t.name==='POS');
+      const table=posTable?.id||(state.tables[0]?.id||1);
+      const orderResponse=await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: table, waiter: 'POS', items })});
+      state.currentPOSOrderId=orderResponse.id;
       state.orders=await api('/api/orders');
+      openChangeModal(orderResponse.total_cents/100, orderResponse.id);
+      state.posBasket.clear();
       renderTheke();
     });
 
@@ -1527,7 +1453,8 @@ function renderPOSColumn(container){
       if(state.posBasket.size===0) return;
       const items=[];
       state.posBasket.forEach((q,pid)=>{ for(let i=0;i<q;i++) items.push(pid); });
-      const table=state.tables[0]?.id||1;
+      const posTable=state.tables.find(t=>t.name==='POS');
+      const table=posTable?.id||(state.tables[0]?.id||1);
       const orderRes=await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: table, waiter: 'POS', items })});
       await api(`/api/orders/${orderRes.id}/pay`,{method:'POST'});
       state.posBasket.clear();
@@ -1555,7 +1482,13 @@ function renderPOSHistory(){
   const wrap=$('#pos-history-list');
   wrap.innerHTML='';
 
-  const posOrders=state.orders.filter(o=>o.status!=='open').sort((a,b)=>b.created_at.localeCompare(a.created_at)).slice(0,50);
+  // History: Zeige Bestellungen die abgeholt ODER vollständig bezahlt sind
+  const posOrders=state.orders.filter(o=>{
+    if(o.status==='picked') return true; // Abgeholt immer anzeigen
+    if(o.status==='paid') return true; // Ganze Bestellung als bezahlt markiert
+    const allPaid=o.items.every(it=>it.paid);
+    return allPaid; // Oder alle Items bezahlt
+  }).sort((a,b)=>b.created_at.localeCompare(a.created_at)).slice(0,50);
 
   if(posOrders.length===0){
     wrap.innerHTML='<div class="muted">Keine abgeschlossenen Bestellungen vorhanden.</div>';
@@ -1573,22 +1506,19 @@ function renderPOSHistory(){
     const createdDate=toDate(o.created_at);
     const timeStr=createdDate.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
     const dateStr=createdDate.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'});
-    left.innerHTML=`<strong>${o.waiter} #${o.id}</strong> · <span class="muted">Tisch ${o.table_id} · ${dateStr} ${timeStr}</span>`;
+    const tableLabel=o.waiter==='POS'?'POS':`Tisch ${o.table_id}`;
+    left.innerHTML=`<strong>${o.waiter} #${o.id}</strong> · <span class="muted">${tableLabel} · ${dateStr} ${timeStr}</span>`;
 
     const middle=document.createElement('div');
-    const statusBadge=document.createElement('span');
-    statusBadge.className='status-badge';
-    if(o.status==='ready'){
-      statusBadge.classList.add('status-ready');
-      statusBadge.textContent='bereit';
-    } else if(o.status==='picked'){
-      statusBadge.classList.add('status-picked');
-      statusBadge.textContent='abgeholt';
-    } else if(o.status==='paid'){
-      statusBadge.classList.add('status-paid');
-      statusBadge.textContent='bezahlt';
+
+    // Nur Bezahlt-Status anzeigen
+    const allPaid=o.status==='paid' || o.items.every(it=>it.paid);
+    if(allPaid){
+      const paidBadge=document.createElement('span');
+      paidBadge.className='status-badge status-paid';
+      paidBadge.textContent='bezahlt';
+      middle.appendChild(paidBadge);
     }
-    middle.appendChild(statusBadge);
 
     const right=document.createElement('div');
     right.innerHTML=`<strong>${fmtEuro(orderTotal(o))}</strong>`;
@@ -1799,7 +1729,7 @@ async function pollOrders(){ setInterval(async ()=>{ try{ const active=['#view-t
         if(!$('#view-theke').classList.contains('hidden')) renderTheke();
         if(!$('#view-cash').classList.contains('hidden')) renderCash();
         if(!$('#view-tables').classList.contains('hidden')) renderTables();
-      } }catch{} }, 3000); }
+      } }catch{} }, 1000); }
 
 $('#app-header').classList.add('hidden');
 show('#view-login');
