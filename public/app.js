@@ -31,13 +31,14 @@ function closeCommentDialog(){ $('#comment-modal').classList.add('hidden'); curr
 
 /* Change Calculator Modal */
 function openChangeModal(toPay, orderId=null, itemIds=null){
-  $('#change-to-pay-amount').textContent=fmtEuro(toPay);
+  $('#change-to-pay-input').value=toPay.toFixed(2).replace('.',',');
   $('#change-given-input').value='';
   $('#change-result-amount').textContent='0,00 €';
   $('#change-result-amount').style.color='#0a84ff';
   $('#change-modal').classList.remove('hidden');
 
-  // Store the amount to pay for calculations
+  // Store the ORIGINAL amount (for database) and DISPLAY amount (for calculation)
+  $('#change-modal').dataset.originalToPay=toPay.toFixed(2);
   $('#change-modal').dataset.toPay=toPay.toFixed(2);
 
   // Store order and item context for payment
@@ -268,6 +269,9 @@ on('#btn-confirm-change','click', async ()=>{
 
       state.orders=await api('/api/orders');
 
+      // Check if we're in cash view (detail or overview)
+      const inCashView = !$('#view-cash').classList.contains('hidden');
+
       // Update cash detail view if we're in it
       if(currentCashOrder && currentCashOrder.id==orderId){
         currentCashOrder=state.orders.find(o=>o.id==orderId);
@@ -281,6 +285,30 @@ on('#btn-confirm-change','click', async ()=>{
           selectedItems.clear();
           renderCashDetail();
         }
+      } else if(inCashView){
+        // We're in cash overview (not detail), just refresh it
+        renderCash();
+        renderTables();
+      } else {
+        // Not in cash view, refresh theke
+        renderTheke();
+      }
+    } else {
+      // No order context - check if POS basket has items
+      if(state.posBasket && state.posBasket.size > 0){
+        // Create and pay POS order (same as "Alles kassiert")
+        const items=[];
+        state.posBasket.forEach((q,pid)=>{ for(let i=0;i<q;i++) items.push(pid); });
+        const posTable=state.tables.find(t=>t.name==='POS');
+        const table=posTable?.id||(state.tables[0]?.id||1);
+        const orderRes=await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: table, waiter: 'POS', items })});
+        await api(`/api/orders/${orderRes.id}/pay`,{method:'POST'});
+        state.posBasket.clear();
+        state.orders=await api('/api/orders');
+        renderTheke();
+      } else {
+        // No order context and no basket, just refresh theke
+        renderTheke();
       }
     }
 
@@ -288,9 +316,8 @@ on('#btn-confirm-change','click', async ()=>{
     if(state.currentPOSOrderId){
       state.currentPOSOrderId=null;
       state.posBasket.clear();
+      renderTheke();
     }
-
-    renderTheke();
   }catch(err){
     console.error('Failed to mark order/items as paid:',err);
   }
@@ -300,8 +327,9 @@ on('#btn-confirm-change','click', async ()=>{
 
 // Change modal: Calculate change
 function calculateChangeInModal(){
-  const modal=$('#change-modal');
-  const toPay=parseFloat(modal.dataset.toPay)||0;
+  // Use the editable "Zu kassieren" field for calculation
+  const toPayInput=$('#change-to-pay-input').value.trim().replace(',','.');
+  const toPay=parseFloat(toPayInput)||0;
   const givenInput=$('#change-given-input').value.trim().replace(',','.');
   const given=parseFloat(givenInput)||0;
   const change=Math.max(0,given-toPay);
@@ -319,6 +347,7 @@ function calculateChangeInModal(){
   }
 }
 
+on('#change-to-pay-input','input',calculateChangeInModal);
 on('#change-given-input','input',calculateChangeInModal);
 
 // Quick buttons - ADD to current value
@@ -599,8 +628,29 @@ function renderCash(){
     right.style.gap='8px';
     const price=document.createElement('div');
     price.innerHTML=`<strong>${fmtEuro(orderTotal(o))}</strong>`;
+
+    // Button-Container für Rückgeld + Alles kassiert
+    const btnRow=document.createElement('div');
+    btnRow.style.display='flex';
+    btnRow.style.gap='24px';
+    btnRow.style.width='100%';
+
+    // Rückgeld-Button
+    const changeBtn=document.createElement('button');
+    changeBtn.className='ghost';
+    changeBtn.style.padding='8px';
+    changeBtn.style.minHeight='40px';
+    changeBtn.title='Rückgeld berechnen';
+    changeBtn.innerHTML='<span class="material-symbols-outlined">calculate</span>';
+    changeBtn.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      openChangeModal(orderTotal(o), o.id);
+    });
+
+    // Alles kassiert Button
     const btn=document.createElement('button');
     btn.className='primary';
+    btn.style.flex='1';
     btn.innerHTML='<span class="material-symbols-outlined">check</span> Alles kassiert';
     btn.addEventListener('click', async (e)=>{
       e.stopPropagation();
@@ -609,7 +659,9 @@ function renderCash(){
       renderCash();
       renderTables();
     });
-    right.append(price,btn);
+
+    btnRow.append(changeBtn, btn);
+    right.append(price, btnRow);
     row.append(left,right);
     card.appendChild(row);
     wrap.appendChild(card);
@@ -779,11 +831,21 @@ function isOrderReady(o){ return o.items.length>0 && o.items.every(i=>i.ready); 
 function productName(id){ const p=state.products.find(x=>x.id===id); return p? p.name : ('P'+id); }
 function productStation(id){ const p=state.products.find(x=>x.id===id); return p? p.station : null; }
 async function renderTheke(){
-  // Speichere Scroll-Positionen aller scrollbaren Elemente
-  const scrollableElements = document.querySelectorAll('#theke-columns .theke-col, #theke-columns .bediener-column, #theke-columns .pos-column');
+  // Speichere Scroll-Positionen aller scrollbaren Elemente mit eindeutigen Selektoren
+  const scrollableSelectors = [
+    '#theke-columns .theke-col',
+    '#theke-columns .bediener-column',
+    '#theke-columns .pos-column',
+    '#theke-columns .pos-products-area'
+  ];
+
   const scrollPositions = new Map();
-  scrollableElements.forEach((el, index) => {
-    scrollPositions.set(index, el.scrollTop);
+  scrollableSelectors.forEach(selector => {
+    const elements = document.querySelectorAll(selector);
+    elements.forEach((el, index) => {
+      const key = `${selector}[${index}]`;
+      scrollPositions.set(key, el.scrollTop);
+    });
   });
 
   if(state.selectedStation){
@@ -795,15 +857,18 @@ async function renderTheke(){
   }
   updateHeader('#view-theke');
 
-  // Stelle Scroll-Positionen wieder her
-  setTimeout(() => {
-    const newScrollableElements = document.querySelectorAll('#theke-columns .theke-col, #theke-columns .bediener-column, #theke-columns .pos-column');
-    newScrollableElements.forEach((el, index) => {
-      if (scrollPositions.has(index)) {
-        el.scrollTop = scrollPositions.get(index);
-      }
+  // Stelle Scroll-Positionen wieder her (mit requestAnimationFrame für besseres Timing)
+  requestAnimationFrame(() => {
+    scrollableSelectors.forEach(selector => {
+      const elements = document.querySelectorAll(selector);
+      elements.forEach((el, index) => {
+        const key = `${selector}[${index}]`;
+        if (scrollPositions.has(key)) {
+          el.scrollTop = scrollPositions.get(key);
+        }
+      });
     });
-  }, 0);
+  });
 }
 
 function renderStationMode(){
@@ -1011,17 +1076,25 @@ function renderKitchenMode(){
     allWaiters.push('POS');
   }
 
-  // Sortierung: Bei mehr als 4 Bedienungen -> mit Bestellungen zuerst, sonst alphabetisch
+  // Sortierung: POS immer ganz rechts, dann bei mehr als 4 Bedienungen -> mit Bestellungen zuerst, sonst alphabetisch
   let waiters;
   if(allWaiters.length>4){
     waiters=allWaiters.sort((a,b)=>{
+      // POS immer ans Ende (ganz rechts)
+      if(a==='POS') return 1;
+      if(b==='POS') return -1;
       const hasOrdersA=(groups[a]&&groups[a].length>0)?1:0;
       const hasOrdersB=(groups[b]&&groups[b].length>0)?1:0;
       if(hasOrdersB!==hasOrdersA) return hasOrdersB-hasOrdersA;
       return a.localeCompare(b);
     });
   } else {
-    waiters=allWaiters.sort();
+    waiters=allWaiters.sort((a,b)=>{
+      // POS immer ans Ende (ganz rechts)
+      if(a==='POS') return 1;
+      if(b==='POS') return -1;
+      return a.localeCompare(b);
+    });
   }
 
   // Wenn nur ein Bediener, füge CSS-Klasse hinzu
@@ -1183,17 +1256,25 @@ function renderBedienerColumn(container){
     allWaiters.push('POS');
   }
 
-  // Sortierung: Bei mehr als 4 Bedienungen -> mit Bestellungen zuerst, sonst alphabetisch
+  // Sortierung: POS immer ganz rechts, dann bei mehr als 4 Bedienungen -> mit Bestellungen zuerst, sonst alphabetisch
   let waiters;
   if(allWaiters.length>4){
     waiters=allWaiters.sort((a,b)=>{
+      // POS immer ans Ende (ganz rechts)
+      if(a==='POS') return 1;
+      if(b==='POS') return -1;
       const hasOrdersA=(groups[a]&&groups[a].length>0)?1:0;
       const hasOrdersB=(groups[b]&&groups[b].length>0)?1:0;
       if(hasOrdersB!==hasOrdersA) return hasOrdersB-hasOrdersA;
       return a.localeCompare(b);
     });
   } else {
-    waiters=allWaiters.sort();
+    waiters=allWaiters.sort((a,b)=>{
+      // POS immer ans Ende (ganz rechts)
+      if(a==='POS') return 1;
+      if(b==='POS') return -1;
+      return a.localeCompare(b);
+    });
   }
 
   // Bei mehreren Bedienern: Erstelle für jeden eine eigene theke-col
