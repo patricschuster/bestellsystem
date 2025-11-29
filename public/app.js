@@ -350,6 +350,11 @@ function calculateChangeInModal(){
 on('#change-to-pay-input','input',calculateChangeInModal);
 on('#change-given-input','input',calculateChangeInModal);
 
+// Auto-clear "Zu kassieren" field on focus
+on('#change-to-pay-input','focus',(e)=>{
+  e.target.select(); // Select all text so it gets replaced on typing
+});
+
 // Quick buttons - ADD to current value
 document.addEventListener('click',(e)=>{
   const btn=e.target.closest('.change-quick-btn');
