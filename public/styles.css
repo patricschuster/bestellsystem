@@ -1,7 +1,45 @@
-:root{ --bg:#f7f8fa; --surface:#fff; --fg:#0b0c0e; --muted:#6b7280; --blue:#0a84ff; --green:#16a34a; --red:#e11d48; --card:#fbfbfd; --radius:16px; --tap:44px; }
+:root{
+  --bg:#f7f8fa;
+  --surface:#fff;
+  --fg:#0b0c0e;
+  --muted:#6b7280;
+  --blue:#0a84ff;
+  --green:#16a34a;
+  --red:#e11d48;
+  --card:#fbfbfd;
+  --radius:16px;
+  --tap:44px;
+  /* iOS PWA: Header-Höhe mit Safe-Area */
+  --hdr-h: max(60px, env(safe-area-inset-top));
+}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 .material-symbols-outlined{font-variation-settings:'FILL' 0,'wght' 400,'GRAD' 0,'opsz' 24;vertical-align:middle;font-size:20px}
-html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Arial,sans-serif;overflow-x:hidden}
+
+/* =============================================================================
+   iOS/iPad PWA: Viewport Stability & Scroll-Lock
+   ============================================================================= */
+html,body{
+  height:100%;
+  margin:0;
+  padding:0;
+  background:var(--bg);
+  color:var(--fg);
+  font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Arial,sans-serif;
+  overflow-x:hidden;
+  /* Modern: Verhindert Rubber-banding */
+  overscroll-behavior:none;
+}
+
+/* iOS Standalone: Body Scroll-Lock nur im Thekenmodus */
+body.lock-scroll{
+  position:fixed;
+  inset:0;
+  overflow:hidden;
+  width:100%;
+  height:100%;
+  /* Erlaubt vertikales Pan in erlaubten Bereichen (.theke-col) */
+  touch-action:pan-y;
+}
 .hidden{display:none!important}.text-center{text-align:center}.muted{color:var(--muted)}.small{font-size:12px}
 header#app-header{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:12px;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #eee;background:#fff}
 header .left{display:flex;align-items:center;gap:8px;min-width:0;flex:1}
@@ -10,8 +48,32 @@ header .right{display:flex;gap:8px;flex:1;justify-content:flex-end;align-items:c
 header .right button{position:relative}
 #hdr-right{font-size:14px;margin-right:8px}
 .btn-badge{position:absolute;top:-4px;right:-4px;width:20px;height:20px;line-height:20px;border-radius:999px;background:var(--blue);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;pointer-events:none}
+
+/* Connection Status Indicator (Ampel) */
+.connection-status{display:inline-block;width:10px;height:10px;border-radius:50%;margin-left:6px;transition:background-color .3s ease}
+.connection-status.online{background-color:#16a34a;box-shadow:0 0 4px rgba(22,163,74,.5)}
+.connection-status.offline{background-color:#dc2626;box-shadow:0 0 4px rgba(220,38,38,.5)}
+
+/* Notification Toast */
+.notification-toast{position:fixed;top:80px;left:50%;transform:translateX(-50%) translateY(-20px);padding:12px 20px;border-radius:8px;color:#fff;font-weight:500;font-size:14px;z-index:1000;opacity:0;transition:all .3s ease;pointer-events:none;box-shadow:0 4px 12px rgba(0,0,0,.15)}
+.notification-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.notification-toast.success{background:#16a34a}
+.notification-toast.warning{background:#f97316}
+.notification-toast.info{background:#0284c7}
+
 .view{padding:16px}
-#view-theke{padding:0 10px;overflow:hidden}
+
+/* iOS PWA: Theke füllt Viewport unter Header */
+#view-theke{
+  padding:0 10px;
+  overflow:hidden;
+  /* Fallback-Chain für maximale Kompatibilität */
+  height:calc(100vh - var(--hdr-h));   /* iOS 14- */
+  height:calc(100dvh - var(--hdr-h));  /* iOS 15+ dynamic */
+  height:calc(100svh - var(--hdr-h));  /* iOS 15+ stable (preferred) */
+  /* Safe-Area für Home Indicator */
+  padding-bottom:env(safe-area-inset-bottom);
+}
 button{min-height:var(--tap);padding:10px 14px;border-radius:12px;cursor:pointer;border:1px solid rgba(0,0,0,.08);background:linear-gradient(#fff,#f3f5f8);font-weight:700}
 button.primary{color:#fff;background:linear-gradient(#1990ff,#0a84ff);border-color:#0a84ff}
 #btn-send-header{padding-left:40px;padding-right:40px}
@@ -110,21 +172,140 @@ textarea{resize:vertical;min-height:80px}
 
 /* POS Spalte: Produktgrid im Fokus, Checkout dynamisch */
 .pos-column{display:grid;grid-template-rows:1fr auto;gap:10px;overflow:hidden;min-height:0}
-.pos-products-area{overflow-y:auto;padding:8px;background:#fafafa}
 
-/* Produkt-Grid: 5 Spalten bei 1 Bediener (30/70), 4 Spalten bei 2+ Bedienern (50/50) */
-.pos-products-area .grid.products{
-  grid-template-columns:repeat(5, 1fr);
-  gap:6px;
+/* ==================================================================
+   POS PRODUKT-GRID: FESTE SPALTEN, DYNAMISCHE HÖHE (KEIN OVERFLOW!)
+   ================================================================== */
+
+/* Container nutzt verfügbare Höhe */
+.pos-products-area {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px;
+  background: #fafafa;
+  -webkit-overflow-scrolling: touch;
 }
-.hybrid-layout.split-50-50 .pos-products-area .grid.products{
-  grid-template-columns:repeat(4, 1fr);
+
+/* Grid: Feste Spalten, adaptive Höhe */
+.pos-products-area .grid.products {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  align-content: start;
+  /* Basis: 3 Spalten für kleine Displays */
+  grid-template-columns: repeat(3, 1fr);
 }
-.pos-products-area .product-btn{
-  aspect-ratio:3/2;
-  min-height:auto;
-  padding:8px 6px;
-  font-size:14px;
+
+/* Basis-Styling für Kacheln */
+.pos-products-area .product-btn {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  max-height: 180px;
+  min-height: 85px;
+  padding: 8px 6px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* ==== SMARTPHONES (<600px) ==== */
+@media (max-width: 599px) {
+  .pos-products-area .grid.products {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+  .pos-products-area .product-btn {
+    aspect-ratio: 1 / 1;
+    max-height: min(140px, calc((100vh - 180px) / 4));
+    min-height: 85px;
+  }
+}
+
+/* ==== TABLETS PORTRAIT (600px - 1023px) ==== */
+@media (min-width: 600px) and (max-width: 1023px) and (orientation: portrait) {
+  .pos-products-area .grid.products {
+    grid-template-columns: repeat(4, 1fr); /* Feste 4 Spalten */
+    gap: 10px;
+  }
+  .pos-products-area .product-btn {
+    aspect-ratio: 1 / 1;
+    /* Bei 20 Produkten = 5 Zeilen: (vh-250px)/5.5 */
+    max-height: min(160px, calc((100vh - 250px) / 5.5));
+    min-height: 95px;
+  }
+}
+
+/* ==== TABLETS LANDSCAPE (600px - 1199px) ==== */
+@media (min-width: 600px) and (max-width: 1199px) and (orientation: landscape) {
+  .pos-products-area .grid.products {
+    grid-template-columns: repeat(6, 1fr); /* Feste 6 Spalten */
+    gap: 8px;
+  }
+  .pos-products-area .product-btn {
+    aspect-ratio: 4 / 3;
+    /* Bei 20 Produkten = 4 Zeilen: (vh-180px)/4.5 */
+    max-height: min(120px, calc((100vh - 180px) / 4.5));
+    min-height: 70px;
+  }
+}
+
+/* ==== DESKTOP LANDSCAPE (≥1200px) ==== */
+@media (min-width: 1200px) and (orientation: landscape) {
+  .pos-products-area .grid.products {
+    grid-template-columns: repeat(7, 1fr); /* Feste 7 Spalten */
+    gap: 10px;
+  }
+  .pos-products-area .product-btn {
+    aspect-ratio: 4 / 3;
+    max-height: min(140px, calc((100vh - 200px) / 4));
+    min-height: 80px;
+  }
+}
+
+/* ==== DESKTOP PORTRAIT (≥1024px) ==== */
+@media (min-width: 1024px) and (orientation: portrait) {
+  .pos-products-area .grid.products {
+    grid-template-columns: repeat(5, 1fr); /* Feste 5 Spalten */
+    gap: 12px;
+  }
+  .pos-products-area .product-btn {
+    aspect-ratio: 1 / 1;
+    max-height: min(180px, calc((100vh - 250px) / 5));
+    min-height: 100px;
+  }
+}
+
+/* ==== SPLIT-LAYOUT: 50/50 (mit Warenkorb) ==== */
+.hybrid-layout.split-50-50 .pos-products-area .grid.products {
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.hybrid-layout.split-50-50 .pos-products-area .product-btn {
+  max-height: min(130px, calc((100vh - 180px) / 4.5));
+  min-height: 75px;
+}
+
+/* ==== SPLIT-LAYOUT: 30/70 (mit Warenkorb) ==== */
+.hybrid-layout.split-30-70 .pos-products-area .grid.products {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.hybrid-layout.split-30-70 .pos-products-area .product-btn {
+  max-height: min(150px, calc((100vh - 200px) / 5));
+  min-height: 85px;
+}
+
+/* ==== BASIS-STYLING FÜR ALLE KACHELN ==== */
+.pos-products-area .product-btn {
+  /* Stelle sicher, dass Kacheln niemals überlappen */
+  box-sizing: border-box;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
 }
 .pos-products-area .product-btn .name{
   font-size:14px;
@@ -219,12 +400,30 @@ textarea{resize:vertical;min-height:80px}
   flex:0.33 !important;
 }
 
-.theke-columns{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+/* iOS PWA: Theke-Container muss Höhe bekommen */
+.theke-columns{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  gap:12px;
+  height:100%;
+  overflow:hidden;
+}
 @media (min-width:1024px){.theke-columns{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}}
 @media (min-width:1400px){.theke-columns{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}}
 .theke-columns.single-waiter{display:flex;justify-content:center}
 .theke-columns.single-waiter .theke-col{max-width:50%;min-width:400px}
-.theke-col{display:flex;flex-direction:column;gap:12px}
+
+/* iOS PWA: Nur Spalten dürfen scrollen */
+.theke-col{
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+  min-height:0;
+  overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
+  /* Verhindert Parent-Scroll am Ende */
+  overscroll-behavior:contain;
+}
 .theke-col .col-title{position:sticky;top:0;z-index:10;text-align:center;font-weight:800;border:1px solid #eee;padding:6px 8px;background:#fff;border-radius:12px;box-shadow:0 6px 16px rgba(0,0,0,.06);margin-bottom:8px}
 .order-card{background:#fff;border:1px solid #eee;border-radius:14px;padding:12px;box-shadow:0 6px 16px rgba(0,0,0,.06)}
 .order-card.bg-open{background:#fff6f7}
@@ -311,62 +510,88 @@ textarea{resize:vertical;min-height:80px}
   overflow-y:auto;
   padding:4px;
 }
-/* POS Produktgrid - optimal für alle Screens */
+
+/* POS Produktgrid - Feste Spalten, keine Overflows */
 .pos-products .grid.products{
-  grid-template-columns:repeat(auto-fill, minmax(120px, 1fr));
-  gap:12px;
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  align-content: start;
+  grid-template-columns: repeat(3, 1fr); /* Basis: 3 Spalten */
 }
-/* Große Desktops */
-@media (min-width:1600px){
-  .pos-products .grid.products{
-    grid-template-columns:repeat(6, 1fr);
-  }
+
+.pos-products .product-btn {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  max-height: 180px;
+  min-height: 85px;
+  padding: 8px 6px;
+  box-sizing: border-box;
+  overflow: hidden;
 }
-/* Standard Desktop */
-@media (min-width:1200px) and (max-width:1599px){
+
+/* ==== SMARTPHONES (<600px) ==== */
+@media (max-width: 599px){
   .pos-products .grid.products{
-    grid-template-columns:repeat(5, 1fr);
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
   }
-}
-/* iPad Air & ähnliche (1024px - 1199px) - 4 Spalten */
-@media (min-width:1024px) and (max-width:1199px){
-  .pos-layout{
-    grid-template-columns:1fr 380px;
-  }
-  .pos-products .grid.products{
-    grid-template-columns:repeat(4, 1fr);
-    gap:12px;
-  }
-}
-/* iPad & kleinere Tablets (768px - 1023px) - 4 Spalten */
-@media (min-width:768px) and (max-width:1023px){
-  .pos-layout{
-    grid-template-columns:1fr 340px;
-  }
-  .pos-products .grid.products{
-    grid-template-columns:repeat(4, 1fr);
-    gap:10px;
+  .pos-products .product-btn {
+    aspect-ratio: 1 / 1;
+    max-height: min(140px, calc((100vh - 180px) / 4));
+    min-height: 85px;
   }
 }
-/* iPad Portrait (600px - 767px) */
-@media (min-width:600px) and (max-width:767px){
+
+/* ==== TABLETS PORTRAIT (600px - 1023px) ==== */
+@media (min-width: 600px) and (max-width: 1023px) and (orientation: portrait) {
   .pos-products .grid.products{
-    grid-template-columns:repeat(4, 1fr);
-    gap:10px;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+  }
+  .pos-products .product-btn {
+    aspect-ratio: 1 / 1;
+    max-height: min(160px, calc((100vh - 250px) / 5.5));
+    min-height: 95px;
   }
 }
-/* Smartphones groß (450px - 599px) */
-@media (min-width:450px) and (max-width:599px){
+
+/* ==== TABLETS LANDSCAPE (600px - 1199px) ==== */
+@media (min-width: 600px) and (max-width: 1199px) and (orientation: landscape) {
   .pos-products .grid.products{
-    grid-template-columns:repeat(3, 1fr);
-    gap:10px;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 8px;
+  }
+  .pos-products .product-btn {
+    aspect-ratio: 4 / 3;
+    max-height: min(120px, calc((100vh - 180px) / 4.5));
+    min-height: 70px;
   }
 }
-/* Smartphones klein (< 450px) */
-@media (max-width:449px){
+
+/* ==== DESKTOP LANDSCAPE (≥1200px) ==== */
+@media (min-width: 1200px) and (orientation: landscape) {
   .pos-products .grid.products{
-    grid-template-columns:repeat(2, 1fr);
-    gap:10px;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 10px;
+  }
+  .pos-products .product-btn {
+    aspect-ratio: 4 / 3;
+    max-height: min(140px, calc((100vh - 200px) / 4));
+    min-height: 80px;
+  }
+}
+
+/* ==== DESKTOP/TABLET PORTRAIT (≥1024px) ==== */
+@media (min-width: 1024px) and (orientation: portrait) {
+  .pos-products .grid.products{
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+  }
+  .pos-products .product-btn {
+    aspect-ratio: 1 / 1;
+    max-height: min(180px, calc((100vh - 250px) / 5));
+    min-height: 100px;
   }
 }
 .pos-summary{

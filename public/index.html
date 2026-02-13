@@ -21,6 +21,7 @@
     <button id="btn-logout" class="ghost"><span class="material-symbols-outlined">logout</span></button>
     <button id="btn-back-header" class="ghost outline hidden"><span class="material-symbols-outlined">arrow_back</span></button>
     <span id="hdr-left"></span>
+    <span id="connection-status" class="connection-status offline" title="Offline"></span>
   </div>
   <div class="center">
     <span id="hdr-title">Login</span>
@@ -48,11 +49,11 @@
     </div>
     <div class="field" id="name-wrap">
       <label>Dein Name</label>
-      <input id="inp-name" placeholder="z. B. Tobi" autocomplete="off"/>
+      <input id="inp-name" placeholder="z. B. Stefan" autocomplete="off"/>
     </div>
     <div class="field hidden" id="pin-wrap">
       <label>PIN</label>
-      <input id="inp-pin" placeholder="••••" inputmode="numeric" maxlength="6"/>
+      <input id="inp-pin" placeholder="••••" inputmode="numeric" maxlength="8"/>
     </div>
     <button id="btn-login" class="primary">Anmelden</button>
   </div>
@@ -273,6 +274,20 @@
     </div>
   </section>
   <section id="admin-system" class="admin-section hidden">
+    <div class="admin-card">
+      <h3>🔒 PIN-Verwaltung</h3>
+      <p class="muted small">Ändern Sie die PINs für Theke und Admin (4-8 Ziffern). Master-PIN: 22822282 (nicht änderbar)</p>
+      <div class="inline">
+        <label>Theke-PIN:</label>
+        <input id="pin-bar-input" type="text" inputmode="numeric" maxlength="8" placeholder="4711" style="max-width:120px;"/>
+        <button id="btn-save-pin-bar" class="outline">Speichern</button>
+      </div>
+      <div class="inline" style="margin-top:8px;">
+        <label>Admin-PIN:</label>
+        <input id="pin-admin-input" type="text" inputmode="numeric" maxlength="8" placeholder="0815" style="max-width:120px;"/>
+        <button id="btn-save-pin-admin" class="outline">Speichern</button>
+      </div>
+    </div>
     <div class="admin-row">
       <div class="admin-card">
         <h3>System-Status</h3>

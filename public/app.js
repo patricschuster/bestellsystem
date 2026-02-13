@@ -1,11 +1,263 @@
-// app.js (v2.3.20 + POS)
+// app.js (v2.4 + POS)
 const $  = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
 const on = (sel,evt,fn)=>{ const el=(typeof sel==='string')?$(sel):sel; if(el) el.addEventListener(evt,fn); };
 
-const state={ role:'waiter', user:null, tables:[], products:[], orders:[], config:{}, version:'2.3.20', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null };
+const state={ role:'waiter', user:null, tables:[], products:[], orders:[], config:{}, version:'2.4', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null };
 
 async function api(path, opts={}){ const res=await fetch(path,{ headers:{'Content-Type':'application/json'}, ...opts }); if(!res.ok){ let t=await res.text(); try{ const j=JSON.parse(t); t=j.error||j.message||t; }catch{}; throw new Error(t); } return res.json(); }
+
+// =============================================================================
+// WEBSOCKET CLIENT (Hybrid Mode with Polling Fallback)
+// =============================================================================
+
+function connectWebSocket() {
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    console.log('[WebSocket] Already connected');
+    return;
+  }
+
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const host = window.location.host;
+  const wsUrl = `${protocol}//${host}`;
+
+  console.log('[WebSocket] Connecting to', wsUrl);
+
+  try {
+    state.ws = new WebSocket(wsUrl);
+
+    state.ws.onopen = () => {
+      console.log('✅ [WebSocket] Connected');
+
+      // Show reconnection notification if this was a reconnect
+      if (state.wsReconnectAttempts > 0) {
+        showNotification('Verbindung wiederhergestellt', 'success');
+      }
+
+      state.wsReconnectAttempts = 0;
+      state.connectionStatus = 'online';
+      updateConnectionStatus();
+
+      // Send initial ping
+      if (state.ws.readyState === WebSocket.OPEN) {
+        state.ws.send(JSON.stringify({ event: 'ping', timestamp: new Date().toISOString() }));
+      }
+
+      // Start heartbeat (ping every 30 seconds)
+      if (state.wsPingInterval) clearInterval(state.wsPingInterval);
+      state.wsPingInterval = setInterval(() => {
+        if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+          state.ws.send(JSON.stringify({ event: 'ping', timestamp: new Date().toISOString() }));
+          console.log('[WebSocket] Ping sent');
+        }
+      }, 30000); // 30 seconds
+    };
+
+    state.ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        console.log('📩 [WebSocket] Received:', message.event, message.data);
+        handleWebSocketEvent(message.event, message.data);
+      } catch (err) {
+        console.error('[WebSocket] Error parsing message:', err);
+      }
+    };
+
+    state.ws.onclose = (event) => {
+      console.log('❌ [WebSocket] Connection closed', event.code, event.reason);
+      state.ws = null;
+      state.connectionStatus = 'offline';
+      updateConnectionStatus();
+
+      // Stop heartbeat
+      if (state.wsPingInterval) {
+        clearInterval(state.wsPingInterval);
+        state.wsPingInterval = null;
+      }
+
+      // Show disconnect notification
+      showNotification('Verbindung unterbrochen - Verwende Polling-Modus', 'warning');
+
+      // Auto-reconnect with exponential backoff
+      state.wsReconnectAttempts++;
+      const delay = Math.min(1000 * Math.pow(2, state.wsReconnectAttempts), 30000); // Max 30s
+      console.log(`[WebSocket] Reconnecting in ${delay}ms (attempt ${state.wsReconnectAttempts})...`);
+
+      setTimeout(() => {
+        if (state.user) { // Only reconnect if still logged in
+          connectWebSocket();
+        }
+      }, delay);
+    };
+
+    state.ws.onerror = (error) => {
+      console.error('[WebSocket] Error:', error);
+    };
+
+  } catch (err) {
+    console.error('[WebSocket] Failed to create connection:', err);
+  }
+}
+
+function disconnectWebSocket() {
+  if (state.ws) {
+    console.log('[WebSocket] Disconnecting...');
+    state.ws.close(1000, 'User logout'); // 1000 = normal closure
+    state.ws = null;
+  }
+
+  // Stop heartbeat
+  if (state.wsPingInterval) {
+    clearInterval(state.wsPingInterval);
+    state.wsPingInterval = null;
+  }
+
+  state.wsReconnectAttempts = 0;
+  state.connectionStatus = 'offline';
+  updateConnectionStatus();
+}
+
+function updateConnectionStatus() {
+  const statusIndicator = $('#connection-status');
+  if (!statusIndicator) return;
+
+  statusIndicator.className = 'connection-status ' + state.connectionStatus;
+  statusIndicator.title = state.connectionStatus === 'online' ? 'Online' : 'Offline';
+}
+
+function showNotification(message, type = 'info') {
+  // Remove existing notification if any
+  const existing = $('#notification-toast');
+  if (existing) existing.remove();
+
+  // Create notification element
+  const notification = document.createElement('div');
+  notification.id = 'notification-toast';
+  notification.className = `notification-toast ${type}`;
+  notification.textContent = message;
+
+  document.body.appendChild(notification);
+
+  // Show with animation
+  setTimeout(() => notification.classList.add('show'), 10);
+
+  // Auto-hide after 4 seconds
+  setTimeout(() => {
+    notification.classList.remove('show');
+    setTimeout(() => notification.remove(), 300);
+  }, 4000);
+}
+
+function handleWebSocketEvent(event, data) {
+  switch (event) {
+    case 'init':
+      // Initial data when connecting
+      console.log('[WebSocket] Received initial data');
+      if (data.orders) state.orders = data.orders;
+      if (data.sessions) state.sessions = data.sessions;
+      if (data.products) state.products = data.products;
+      renderActiveView();
+      break;
+
+    case 'order:created':
+      // New order created
+      console.log('[WebSocket] New order:', data.id);
+      state.orders.push(data);
+
+      // Only re-render if relevant views are active
+      if (!$('#view-theke').classList.contains('hidden')) {
+        renderTheke();
+      }
+      if (!$('#view-tables').classList.contains('hidden')) {
+        renderTables();
+      }
+      if (!$('#view-cash').classList.contains('hidden')) {
+        renderCash();
+      }
+
+      // Play notification sound (optional)
+      playNotificationSound();
+      break;
+
+    case 'order:updated':
+      // Order updated (items ready, status changed)
+      console.log('[WebSocket] Order updated:', data.id);
+      const index = state.orders.findIndex(o => o.id === data.id);
+      if (index !== -1) {
+        state.orders[index] = data;
+        renderActiveView();
+      } else {
+        // Order not in list yet (shouldn't happen, but handle it)
+        state.orders.push(data);
+        renderActiveView();
+      }
+      break;
+
+    case 'order:paid':
+      // Order was paid, remove from list
+      console.log('[WebSocket] Order paid:', data.id);
+      state.orders = state.orders.filter(o => o.id !== data.id);
+      renderActiveView();
+      break;
+
+    case 'session:update':
+      // Waiter sessions updated
+      console.log('[WebSocket] Sessions updated');
+      state.sessions = data;
+      updateHeader();
+
+      // Re-render theke if active (shows waiter columns)
+      if (!$('#view-theke').classList.contains('hidden')) {
+        renderTheke();
+      }
+      break;
+
+    case 'pong':
+      // Pong response from server
+      console.log('[WebSocket] Pong received');
+      break;
+
+    default:
+      console.warn('[WebSocket] Unknown event:', event);
+  }
+}
+
+// Helper: Render active view
+function renderActiveView() {
+  if (!$('#view-tables').classList.contains('hidden')) renderTables();
+  if (!$('#view-theke').classList.contains('hidden')) renderTheke();
+  if (!$('#view-cash').classList.contains('hidden')) renderCash();
+  if (!$('#view-cash-detail').classList.contains('hidden') && currentCashOrder) openCashDetail(currentCashOrder.id);
+  if (!$('#view-products').classList.contains('hidden')) renderProducts();
+}
+
+// Helper: Play notification sound (optional)
+function playNotificationSound() {
+  // Only play if user is not on tables view (where they created the order)
+  if ($('#view-theke') && !$('#view-theke').classList.contains('hidden')) {
+    try {
+      // Create simple beep using Web Audio API
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      oscillator.frequency.value = 800; // Frequency in Hz
+      oscillator.type = 'sine';
+
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.2);
+    } catch (err) {
+      // Silently fail if audio not supported
+      console.log('[Audio] Notification sound failed:', err.message);
+    }
+  }
+}
 function fmtEuro(v){ return v.toFixed(2).replace('.',',')+' €'; }
 function toDate(s){ try{ if(!s) return new Date(); if(s.includes('T')) return new Date(s); return new Date(s.replace(' ','T')+'Z'); }catch{ return new Date(); } }
 function fmtAgeMinutes(s){ const d=toDate(s); const m=Math.max(0,Math.floor((Date.now()-d.getTime())/60000)); return `${m} min`; }
@@ -216,16 +468,105 @@ function updateHeader(viewId){
   else if(state.role==='waiter') $('#hdr-left').textContent=state.user||'';
   else if(state.role==='admin') $('#hdr-left').textContent='v'+state.version;
   else $('#hdr-left').textContent='';
+
+  // Update connection status indicator
+  updateConnectionStatus();
 }
-function show(viewId){ $$('.view').forEach(v=>v.classList.add('hidden')); $(viewId).classList.remove('hidden'); $('#app-header').classList.remove('hidden'); updateHeader(viewId); }
+function show(viewId){
+  $$('.view').forEach(v=>v.classList.add('hidden'));
+  $(viewId).classList.remove('hidden');
+  $('#app-header').classList.remove('hidden');
+  updateHeader(viewId);
+
+  // 🔒 iOS PWA: Scroll-Lock für Theke aktivieren
+  const isTheke = (viewId === '#view-theke');
+  document.body.classList.toggle('lock-scroll', isTheke);
+
+  if (isTheke) {
+    window.scrollTo(0, 0);
+    // iOS-Scroll-Fixes anwenden
+    requestAnimationFrame(() => applyThekeScrollFixes());
+  }
+}
 function setRole(r){ state.role=r; $$('.role-switch .role').forEach(b=>b.classList.toggle('active', b.dataset.role===r)); const isWaiter=r==='waiter'; $('#name-wrap').classList.toggle('hidden', !isWaiter); $('#pin-wrap').classList.toggle('hidden', isWaiter); }
 $$('.role-switch .role').forEach(b=>on(b,'click',()=>setRole(b.dataset.role))); setRole('waiter');
 
-on('#btn-login','click', async ()=>{ try{ if(state.role==='waiter'){ const name=$('#inp-name').value.trim(); if(!name) return alert('Bitte Name eingeben'); state.user=name; await loadInitial(); loadFavorites(); await startHeartbeat(); await requestWakeLock(); renderTables(); show('#view-tables'); pollOrders(); } else if(state.role==='bar'){ const pin=$('#inp-pin').value.trim(); if(!pin||pin.length<4) return alert('Bitte gültige PIN eingeben'); state.user='Theke'; await loadInitial(); await requestWakeLock(); renderTheke(); show('#view-theke'); pollOrders(); } else { const pin=$('#inp-pin').value.trim(); if(!pin||pin.length<4) return alert('Bitte gültige PIN eingeben'); state.user='Admin'; await loadInitial(); await requestWakeLock(); await adminInit(); show('#view-admin'); pollOrders(); } }catch(e){ alert('Fehler: '+e.message); } });
+on('#btn-login','click', async ()=>{
+  try{
+    if(state.role==='waiter'){
+      const name=$('#inp-name').value.trim();
+      if(!name) return alert('Bitte Name eingeben');
+      state.user=name;
+      await loadInitial();
+      loadFavorites();
+      await startHeartbeat();
+      await requestWakeLock();
+
+      // 🚀 Connect WebSocket
+      connectWebSocket();
+
+      renderTables();
+      show('#view-tables');
+      pollOrders(); // Fallback polling (30s)
+    }
+    else if(state.role==='bar'){
+      const pin=$('#inp-pin').value.trim();
+      if(!pin||pin.length<4) return alert('Bitte gültige PIN eingeben');
+
+      // Validate PIN against server
+      const authResult = await api('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ role: 'bar', pin })
+      });
+
+      if(!authResult.success) return alert('Ungültige PIN');
+
+      state.user='Theke';
+      await loadInitial();
+      await requestWakeLock();
+
+      // 🚀 Connect WebSocket
+      connectWebSocket();
+
+      renderTheke();
+      show('#view-theke');
+      pollOrders(); // Fallback polling (30s)
+    }
+    else {
+      const pin=$('#inp-pin').value.trim();
+      if(!pin||pin.length<4) return alert('Bitte gültige PIN eingeben');
+
+      // Validate PIN against server
+      const authResult = await api('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ role: 'admin', pin })
+      });
+
+      if(!authResult.success) return alert('Ungültige PIN');
+
+      state.user='Admin';
+      await loadInitial();
+      await requestWakeLock();
+
+      // 🚀 Connect WebSocket
+      connectWebSocket();
+
+      await adminInit();
+      show('#view-admin');
+      pollOrders(); // Fallback polling (30s)
+    }
+  }catch(e){
+    alert('Fehler: '+e.message);
+  }
+});
 on('#btn-logout','click', async ()=>{
   if(!confirm('Möchten Sie sich wirklich abmelden?')) return;
   releaseWakeLock();
   await stopHeartbeat();
+
+  // 🚀 Disconnect WebSocket
+  disconnectWebSocket();
+
   location.reload();
 });
 on('#btn-euro','click', ()=>{ renderCash(); show('#view-cash'); });
@@ -1635,7 +1976,7 @@ function renderPOSHistory(){
 }
 
 /* Admin */
-async function adminInit(){ $$('.admin-tabs .tab').forEach(btn=>on(btn,'click',()=>{ $$('.admin-tabs .tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); const tab=btn.dataset.tab; $$('.admin-section').forEach(s=>s.classList.add('hidden')); if(tab==='tables'){ $('#admin-tables').classList.remove('hidden'); adminTablesLoad(); } if(tab==='products'){ $('#admin-products').classList.remove('hidden'); adminProductsLoad(); } if(tab==='stations'){ $('#admin-stations').classList.remove('hidden'); adminStationsLoad(); } if(tab==='report'){ $('#admin-report').classList.remove('hidden'); adminReportLoad(); } if(tab==='system'){ $('#admin-system').classList.remove('hidden'); adminSystemLoad(); } })); adminTablesLoad(); on('#btn-save-cols','click', adminSaveCols); on('#btn-save-theke-layout','click', adminSaveThekeLayout); on('#btn-apply-tables','click', adminApplyTables); on('#btn-add-product','click', adminAddProduct); on('#btn-add-station','click', adminAddStation); on('#btn-refresh-report','click', adminReportLoad); on('#btn-reset-report','click', adminResetReport); on('#btn-refresh-logs','click', adminSystemLoad); }
+async function adminInit(){ $$('.admin-tabs .tab').forEach(btn=>on(btn,'click',()=>{ $$('.admin-tabs .tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); const tab=btn.dataset.tab; $$('.admin-section').forEach(s=>s.classList.add('hidden')); if(tab==='tables'){ $('#admin-tables').classList.remove('hidden'); adminTablesLoad(); } if(tab==='products'){ $('#admin-products').classList.remove('hidden'); adminProductsLoad(); } if(tab==='stations'){ $('#admin-stations').classList.remove('hidden'); adminStationsLoad(); } if(tab==='report'){ $('#admin-report').classList.remove('hidden'); adminReportLoad(); } if(tab==='system'){ $('#admin-system').classList.remove('hidden'); adminSystemLoad(); } })); adminTablesLoad(); on('#btn-save-cols','click', adminSaveCols); on('#btn-save-theke-layout','click', adminSaveThekeLayout); on('#btn-apply-tables','click', adminApplyTables); on('#btn-add-product','click', adminAddProduct); on('#btn-add-station','click', adminAddStation); on('#btn-refresh-report','click', adminReportLoad); on('#btn-reset-report','click', adminResetReport); on('#btn-refresh-logs','click', adminSystemLoad); on('#btn-save-pin-bar','click', adminSavePinBar); on('#btn-save-pin-admin','click', adminSavePinAdmin); }
 async function adminTablesLoad(){ state.config=await api('/api/config'); $('#cfg-cols').value=state.config.grid_cols??4; $('#cfg-theke-layout').value=(state.config.theke_layout??'badges'); const tables=await api('/api/tables'); $('#tbl-count').textContent=tables.length; $('#tbl-target').value=tables.length; const prev=$('#admin-tables-preview'); prev.innerHTML=''; prev.style.setProperty('--cols', Math.max(3, Math.min(6, +($('#cfg-cols').value||4)))); tables.forEach(t=>{ const b=document.createElement('button'); b.className='table-btn'; b.textContent=t.id; prev.appendChild(b); }); }
 async function adminSaveCols(){ const n=Math.max(3,Math.min(6,+($('#cfg-cols').value||4))); await api('/api/config',{method:'PUT', body:JSON.stringify({grid_cols:n})}); state.config.grid_cols=n; await adminTablesLoad(); }
 async function adminSaveThekeLayout(){ const v=$('#cfg-theke-layout').value||'badges'; await api('/api/config',{method:'PUT', body:JSON.stringify({theke_layout:v})}); state.config.theke_layout=v; await adminTablesLoad(); }
@@ -1710,7 +2051,58 @@ async function adminAddProduct(){ const name=$('#p-new-name').value.trim(); cons
 async function adminReportLoad(){ const rep=await api('/api/report/summary'); $('#rep-total').textContent=fmtEuro(rep.total); const tbl=$('#rep-table'); tbl.innerHTML=''; const thead=document.createElement('thead'); thead.innerHTML='<tr><th>Produkt</th><th>Anzahl</th></tr>'; tbl.appendChild(thead); const tb=document.createElement('tbody'); (rep.products||[]).forEach(r=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${r.name}</td><td>${r.qty}</td>`; tb.appendChild(tr); }); tbl.appendChild(tb); }
 async function adminResetReport(){ if(!confirm('Wirklich alle Bestellungen & Positionen dauerhaft löschen?')) return; await api('/api/report/reset',{method:'POST'}); await adminReportLoad(); }
 
+async function adminSavePinBar() {
+  const newPin = $('#pin-bar-input').value.trim();
+  if (!newPin) {
+    return alert('Bitte neue PIN eingeben');
+  }
+  if (!/^\d{4,8}$/.test(newPin)) {
+    return alert('PIN muss 4-8 Ziffern enthalten');
+  }
+  try {
+    await api('/api/settings/pins', {
+      method: 'PUT',
+      body: JSON.stringify({ pin_bar: newPin })
+    });
+    alert('Theke-PIN erfolgreich geändert');
+    $('#pin-bar-input').value = '';
+    await adminSystemLoad();
+  } catch (e) {
+    alert('Fehler beim Ändern der PIN: ' + e.message);
+  }
+}
+
+async function adminSavePinAdmin() {
+  const newPin = $('#pin-admin-input').value.trim();
+  if (!newPin) {
+    return alert('Bitte neue PIN eingeben');
+  }
+  if (!/^\d{4,8}$/.test(newPin)) {
+    return alert('PIN muss 4-8 Ziffern enthalten');
+  }
+  try {
+    await api('/api/settings/pins', {
+      method: 'PUT',
+      body: JSON.stringify({ pin_admin: newPin })
+    });
+    alert('Admin-PIN erfolgreich geändert');
+    $('#pin-admin-input').value = '';
+    await adminSystemLoad();
+  } catch (e) {
+    alert('Fehler beim Ändern der PIN: ' + e.message);
+  }
+}
+
 async function adminSystemLoad(){
+  // Load current PINs (masked)
+  try {
+    const pins = await api('/api/settings/pins');
+    $('#pin-bar-input').placeholder = pins.pin_bar;
+    $('#pin-admin-input').placeholder = pins.pin_admin;
+  } catch (e) {
+    console.error('Failed to load PINs:', e);
+  }
+
   // Fetch system status
   const status=await api('/api/system/status');
   const statusDiv=$('#system-status');
@@ -1733,7 +2125,38 @@ async function adminSystemLoad(){
     {label:'Log-Einträge', value:status.logEntries}
   ];
 
+  // Add WebSocket statistics if available
+  if(status.websocket){
+    const wsUptime=`${Math.floor(status.websocket.uptime/3600)}h ${Math.floor((status.websocket.uptime%3600)/60)}m`;
+    metrics.push(
+      {label:'', value:'', separator:true},
+      {label:'WebSocket Clients', value:status.websocket.connectedClients},
+      {label:'WS Verbindungen (Total)', value:status.websocket.totalConnections},
+      {label:'WS Nachrichten (Sent)', value:status.websocket.messagesSent},
+      {label:'WS Nachrichten (Received)', value:status.websocket.messagesReceived},
+      {label:'WS Uptime', value:wsUptime}
+    );
+
+    // Add broadcast events
+    const events=Object.entries(status.websocket.broadcastEvents||{});
+    if(events.length>0){
+      metrics.push({label:'', value:'', separator:true});
+      events.forEach(([event,count])=>{
+        metrics.push({label:`Event: ${event}`, value:count});
+      });
+    }
+  }
+
   metrics.forEach(m=>{
+    if(m.separator){
+      const sep=document.createElement('div');
+      sep.style.height='1px';
+      sep.style.background='rgba(0,0,0,.1)';
+      sep.style.margin='12px 0';
+      statusDiv.appendChild(sep);
+      return;
+    }
+
     const item=document.createElement('div');
     item.style.display='flex';
     item.style.justifyContent='space-between';
@@ -1795,27 +2218,44 @@ async function adminSystemLoad(){
   });
 }
 
-async function pollOrders(){ setInterval(async ()=>{ try{ const active=['#view-theke','#view-cash','#view-tables','#view-products','#view-admin']; if(active.some(v=>!$(v).classList.contains('hidden'))){
-        state.orders=await api('/api/orders');
-        state.sessions=await api('/api/sessions');
-        state.products=await api('/api/products');
+// Polling Fallback: Only polls if WebSocket is not connected
+async function pollOrders(){
+  setInterval(async ()=>{
+    try{
+      // Only poll if WebSocket is not connected (Fallback mode)
+      const wsConnected = state.ws && state.ws.readyState === WebSocket.OPEN;
 
-        // Check if waiter session still exists
-        if(state.role==='waiter' && state.user){
-          const mySession=state.sessions.find(s=>s.waiter===state.user);
-          if(!mySession){
-            alert('Du wurdest von der Theke abgemeldet.');
-            releaseWakeLock();
-            await stopHeartbeat();
-            location.reload();
-            return;
+      if (!wsConnected) {
+        console.log('[Polling] WebSocket offline, using polling fallback...');
+
+        const active=['#view-theke','#view-cash','#view-tables','#view-products','#view-admin'];
+        if(active.some(v=>!$(v).classList.contains('hidden'))){
+          state.orders=await api('/api/orders');
+          state.sessions=await api('/api/sessions');
+          state.products=await api('/api/products');
+
+          // Check if waiter session still exists
+          if(state.role==='waiter' && state.user){
+            const mySession=state.sessions.find(s=>s.waiter===state.user);
+            if(!mySession){
+              alert('Du wurdest von der Theke abgemeldet.');
+              releaseWakeLock();
+              await stopHeartbeat();
+              disconnectWebSocket();
+              location.reload();
+              return;
+            }
           }
-        }
 
-        if(!$('#view-theke').classList.contains('hidden')) renderTheke();
-        if(!$('#view-cash').classList.contains('hidden')) renderCash();
-        if(!$('#view-tables').classList.contains('hidden')) renderTables();
-      } }catch{} }, 1000); }
+          // Re-render views
+          renderActiveView();
+        }
+      }
+    }catch(err){
+      console.error('[Polling] Error:', err);
+    }
+  }, 30000); // 30 seconds (was 1000ms = 1s)
+}
 
 $('#app-header').classList.add('hidden');
 show('#view-login');
@@ -1826,3 +2266,47 @@ document.addEventListener('visibilitychange', async ()=>{
     await requestWakeLock();
   }
 });
+
+// =============================================================================
+// iOS/iPad PWA: Scroll-Fixes für Theke
+// =============================================================================
+
+// Touchmove Prevention: Verhindert Body-Scroll wenn lock-scroll aktiv
+document.addEventListener('touchmove', (e) => {
+  if (!document.body.classList.contains('lock-scroll')) return;
+
+  // Scroll erlauben nur innerhalb der Spalten
+  const scroller = e.target.closest('.theke-col, .bediener-column, .pos-column, .pos-products-area');
+  if (scroller) return;
+
+  e.preventDefault();
+}, { passive: false });
+
+// iOS Scroll-Containment: Verhindert "bounce-through" am Ende der Spalte
+function iosContainScroll(el) {
+  el.addEventListener('touchstart', () => {
+    // Am oberen Ende: Setze scroll leicht nach unten
+    if (el.scrollTop === 0) {
+      el.scrollTop = 1;
+    }
+    // Am unteren Ende: Setze scroll leicht nach oben
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight) {
+      el.scrollTop = el.scrollHeight - el.clientHeight - 1;
+    }
+  }, { passive: true });
+}
+
+// Fixes auf alle Theke-Spalten anwenden
+let scrollFixesApplied = false;
+function applyThekeScrollFixes() {
+  if (scrollFixesApplied) return; // Nur einmal pro Render
+
+  // Alle scrollbaren Bereiche finden
+  const scrollers = $$('.theke-col, .bediener-column, .pos-products-area');
+  scrollers.forEach(iosContainScroll);
+
+  scrollFixesApplied = true;
+  setTimeout(() => scrollFixesApplied = false, 100);
+
+  console.log('[iOS] Scroll fixes applied to', scrollers.length, 'elements');
+}

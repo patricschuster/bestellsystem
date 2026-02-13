@@ -1,4 +1,4 @@
-// src/db.js (Option B seed, v2.3.20.6)
+// src/db.js (Option B seed, v2.4.0)
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
@@ -69,6 +69,21 @@ export function ensureInitialized(){
       db.prepare("INSERT INTO tables(name) VALUES('POS')").run();
       console.log('POS table created.');
     }
+  }
+
+  // Create settings table for PINs if not exists
+  const hasSettings = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='settings'").get();
+  if(!hasSettings){
+    db.exec(`
+      CREATE TABLE settings(
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+      INSERT INTO settings(key, value) VALUES
+        ('pin_bar', '4711'),
+        ('pin_admin', '0815');
+    `);
+    console.log('Settings table created with default PINs.');
   }
 
   const hasProducts = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='products'").get();
