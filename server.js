@@ -1,4 +1,4 @@
-// server.js (2.4 + WebSocket + Security)
+// server.js (2.4.1 + WebSocket + Security)
 import express from 'express';
 import http from 'http';
 import https from 'https';
@@ -156,14 +156,16 @@ function writeConfigEntry(key,val){
   db.prepare('INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(val));
 }
 
-app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.4', time:new Date().toISOString() }));
+app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.4.1', time:new Date().toISOString() }));
 
 // Config
 app.get('/api/config', (_req,res)=> res.json(readConfigMap()));
 app.put('/api/config', (req,res)=>{ const tx=db.transaction(entries=>{ for(const [k,v] of entries) writeConfigEntry(k,v); }); tx(Object.entries(req.body||{})); return ok(res); });
 
 // Authentication & PINs
-const MASTER_PIN = '22822282';
+// Master PIN is loaded from environment variable for security
+// Set MASTER_PIN environment variable or use default for development only
+const MASTER_PIN = process.env.MASTER_PIN || '22822282';
 
 app.post('/api/auth/login', validate(loginSchema), (req, res) => {
   const { role, pin } = req.body;
@@ -672,9 +674,9 @@ function getOrderWithItems(orderId) {
 // =============================================================================
 
 httpServer.listen(PORT, () => {
-  console.log(`Bestellsystem v2.4 on http://localhost:${PORT}`);
+  console.log(`Bestellsystem v2.4.1 on http://localhost:${PORT}`);
   console.log(`WebSocket server ready`);
-  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.4' });
+  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.4.1' });
 });
 
 // HTTPS Server (mit selbstsigniertem Zertifikat)
