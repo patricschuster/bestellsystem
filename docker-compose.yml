@@ -1,5 +1,6 @@
 services:
-  bestellsystem:
+  thekenflow:
+    container_name: thekenflow
     build: .
     ports:
       - "3000:3000"

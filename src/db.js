@@ -39,38 +39,6 @@ export function ensureInitialized(){
     console.log('station_sessions table created.');
   }
 
-  // Add 'paid' column to order_items if not exists
-  const hasPaidColumn = db.prepare("PRAGMA table_info(order_items)").all().find(col => col.name === 'paid');
-  if(!hasPaidColumn){
-    db.exec('ALTER TABLE order_items ADD COLUMN paid INTEGER NOT NULL DEFAULT 0');
-    console.log('Added paid column to order_items');
-  }
-
-  // Add 'comment' column to order_items if not exists
-  const hasCommentColumn = db.prepare("PRAGMA table_info(order_items)").all().find(col => col.name === 'comment');
-  if(!hasCommentColumn){
-    db.exec('ALTER TABLE order_items ADD COLUMN comment TEXT');
-    console.log('Added comment column to order_items');
-  }
-
-  // Add 'station' column to products if not exists
-  const hasStationColumn = db.prepare("PRAGMA table_info(products)").all().find(col => col.name === 'station');
-  if(!hasStationColumn){
-    db.exec('ALTER TABLE products ADD COLUMN station TEXT');
-    console.log('Added station column to products');
-  }
-
-  // Erstelle POS-Tisch falls nicht vorhanden
-  const hasPOSTable = db.prepare("SELECT * FROM tables WHERE name='POS'").get();
-  if(!hasPOSTable){
-    // Prüfe ob tables Tabelle existiert
-    const hasTablesTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='tables'").get();
-    if(hasTablesTable){
-      db.prepare("INSERT INTO tables(name) VALUES('POS')").run();
-      console.log('POS table created.');
-    }
-  }
-
   // Create settings table for PINs if not exists
   const hasSettings = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='settings'").get();
   if(!hasSettings){
@@ -86,6 +54,7 @@ export function ensureInitialized(){
     console.log('Settings table created with default PINs.');
   }
 
+  // Create main tables if they don't exist yet (fresh database)
   const hasProducts = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='products'").get();
   if(!hasProducts){
     const sql = `
@@ -111,7 +80,9 @@ CREATE TABLE order_items(
   order_id INTEGER NOT NULL,
   product_id INTEGER NOT NULL,
   ready INTEGER NOT NULL DEFAULT 0,
-  price_cents INTEGER NOT NULL
+  price_cents INTEGER NOT NULL,
+  paid INTEGER DEFAULT 0,
+  comment TEXT
 );
 CREATE TABLE config(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 INSERT OR REPLACE INTO config(key,value) VALUES ('product_order','[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18]');
@@ -140,5 +111,45 @@ INSERT INTO products(id,name,price_cents,color,half,active) VALUES
 `;
     db.exec(sql);
     console.log('Database initialized (Option B seed).');
+  }
+
+  // --- Spalten-Migrationen (laufen NACH der Tabellenerstellung) ---
+
+  // order_items: 'paid' Spalte hinzufügen falls nicht vorhanden
+  const hasOrderItems = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='order_items'").get();
+  if(hasOrderItems){
+    const hasPaidColumn = db.prepare("PRAGMA table_info(order_items)").all().find(col => col.name === 'paid');
+    if(!hasPaidColumn){
+      // Kein NOT NULL hier – ältere SQLite-Versionen erlauben das bei ALTER TABLE nicht
+      db.exec('ALTER TABLE order_items ADD COLUMN paid INTEGER DEFAULT 0');
+      console.log('Added paid column to order_items');
+    }
+
+    // order_items: 'comment' Spalte hinzufügen falls nicht vorhanden
+    const hasCommentColumn = db.prepare("PRAGMA table_info(order_items)").all().find(col => col.name === 'comment');
+    if(!hasCommentColumn){
+      db.exec('ALTER TABLE order_items ADD COLUMN comment TEXT');
+      console.log('Added comment column to order_items');
+    }
+  }
+
+  // products: 'station' Spalte hinzufügen falls nicht vorhanden
+  const hasProductsTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='products'").get();
+  if(hasProductsTable){
+    const hasStationColumn = db.prepare("PRAGMA table_info(products)").all().find(col => col.name === 'station');
+    if(!hasStationColumn){
+      db.exec('ALTER TABLE products ADD COLUMN station TEXT');
+      console.log('Added station column to products');
+    }
+  }
+
+  // Erstelle POS-Tisch falls nicht vorhanden
+  const hasTablesTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='tables'").get();
+  if(hasTablesTable){
+    const hasPOSTable = db.prepare("SELECT * FROM tables WHERE name='POS'").get();
+    if(!hasPOSTable){
+      db.prepare("INSERT INTO tables(name) VALUES('POS')").run();
+      console.log('POS table entry created.');
+    }
   }
 }

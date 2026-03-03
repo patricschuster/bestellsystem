@@ -85,7 +85,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .role-switch .role{flex:1;min-height:var(--tap);border:2px solid #e5e7eb;background:#fff}
 .role-switch .role.active{background:var(--blue);color:#fff;border-color:#0a84ff}
 label{display:block;font-size:12px;color:var(--muted);margin:6px 0}
-input, select, textarea{width:100%;min-height:var(--tap);padding:10px 12px;border:1px solid #e5e7eb;border-radius:12px;font-family:inherit}
+input, select, textarea{width:100%;min-height:var(--tap);padding:10px 12px;border:1px solid #e5e7eb;border-radius:12px;font-family:inherit;font-size:16px}
 textarea{resize:vertical;min-height:80px}
 .field{margin-bottom:16px}
 .grid.tables{--cols:4;display:grid;grid-template-columns:repeat(var(--cols),1fr);gap:12px}
@@ -104,6 +104,10 @@ textarea{resize:vertical;min-height:80px}
 .product-btn .minus::after{content:"";position:absolute;inset:0;margin:auto;width:24px;height:24px;border-radius:999px;background:transparent;border:1px solid #e5e7eb;z-index:0}
 .product-btn .minus::before{content:"";position:absolute;inset:0;margin:auto;width:12px;height:3px;background:#111;border-radius:2px;z-index:1}
 .product-btn .badge{width:24px;height:24px;line-height:24px;border-radius:999px;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700}
+/* Bedieneransicht: Mengen-Badge um 50% vergrößert */
+.grid.products .product-btn .badge{width:36px;height:36px;font-size:21px}
+.grid.products .product-btn.product-v1{padding-top:52px}
+.grid.products .product-btn.product-v1 .topbar{height:45px}
 .sticky-footer{position:sticky;bottom:8px;margin-top:12px;display:flex;justify-content:space-between;gap:8px;background:rgba(255,255,255,.85);border:1px solid #eee;padding:8px 10px;border-radius:14px;backdrop-filter:blur(6px)}
 .cash-list{display:flex;flex-direction:column;gap:12px}
 .cash-card{background:#fff;border:1px solid #eee;border-radius:14px;box-shadow:0 6px 16px rgba(0,0,0,.06);padding:12px}

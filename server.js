@@ -109,10 +109,13 @@ const loginSchema = z.object({
 const orderSchema = z.object({
   table_id: z.number().int().positive(),
   waiter: z.string().min(1).max(100),
-  items: z.array(z.object({
-    pid: z.number().int().positive(),
-    comment: z.string().max(500).nullable().optional(),
-  })).min(1),
+  items: z.array(z.union([
+    z.number().int().positive(),
+    z.object({
+      product_id: z.number().int().positive(),
+      comment: z.string().max(500).nullable().optional(),
+    }),
+  ])).min(1),
 });
 
 const productSchema = z.object({
@@ -318,6 +321,9 @@ app.delete('/api/sessions/:waiter', (req,res)=>{
   const waiter=req.params.waiter;
   db.prepare('DELETE FROM waiter_sessions WHERE waiter=?').run(waiter);
   log('info', 'session', `Session deleted: ${waiter}`);
+
+  // 🚀 WebSocket: Bediener-Gerät zur Abmeldung auffordern
+  broadcast('session:kicked', { waiter });
 
   // 🚀 WebSocket: Broadcast updated sessions
   const sessions = db.prepare('SELECT waiter, last_heartbeat FROM waiter_sessions ORDER BY waiter').all();
@@ -546,7 +552,7 @@ wss.on('connection', (ws, req) => {
 
   // Send initial data to newly connected client
   try {
-    const orders = db.prepare('SELECT * FROM orders WHERE status != "paid" ORDER BY datetime(created_at) DESC').all();
+    const orders = db.prepare("SELECT * FROM orders WHERE status != 'paid' ORDER BY datetime(created_at) DESC").all();
     const itemsStmt = db.prepare('SELECT oi.id, oi.product_id, oi.ready, oi.paid, oi.comment, p.name, p.price_cents FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE order_id=?');
     const ordersWithItems = orders.map(o => ({
       ...o,

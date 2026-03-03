@@ -3,7 +3,7 @@ const $  = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
 const on = (sel,evt,fn)=>{ const el=(typeof sel==='string')?$(sel):sel; if(el) el.addEventListener(evt,fn); };
 
-const state={ role:'waiter', user:null, tables:[], products:[], orders:[], config:{}, version:'2.4.1', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null };
+const state={ role:'waiter', user:null, tables:[], products:[], orders:[], config:{}, version:'2.4.1', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null };
 
 async function api(path, opts={}){ const res=await fetch(path,{ headers:{'Content-Type':'application/json'}, ...opts }); if(!res.ok){ let t=await res.text(); try{ const j=JSON.parse(t); t=j.error||j.message||t; }catch{}; throw new Error(t); } return res.json(); }
 
@@ -29,14 +29,24 @@ function connectWebSocket() {
     state.ws.onopen = () => {
       console.log('✅ [WebSocket] Connected');
 
-      // Show reconnection notification if this was a reconnect
-      if (state.wsReconnectAttempts > 0) {
+      // Ausstehende Disconnect-Meldung abbrechen (schnelle Reconnection = stille Wiederverbindung)
+      if (state._disconnectNotifyTimeout) {
+        clearTimeout(state._disconnectNotifyTimeout);
+        state._disconnectNotifyTimeout = null;
+      }
+
+      // Reconnect-Meldung nur wenn vorher auch eine Disconnect-Meldung angezeigt wurde
+      if (state._disconnectNotificationShown) {
         showNotification('Verbindung wiederhergestellt', 'success');
+        state._disconnectNotificationShown = false;
       }
 
       state.wsReconnectAttempts = 0;
       state.connectionStatus = 'online';
       updateConnectionStatus();
+
+      // HTTP Health-Check nicht mehr nötig, WS übernimmt
+      stopLoginHealthCheck();
 
       // Send initial ping
       if (state.ws.readyState === WebSocket.OPEN) {
@@ -75,12 +85,25 @@ function connectWebSocket() {
         state.wsPingInterval = null;
       }
 
-      // Show disconnect notification
-      showNotification('Verbindung unterbrochen - Verwende Polling-Modus', 'warning');
+      // Disconnect-Meldung erst nach 15 Sek. zeigen – kurzer Standby läuft still ab
+      if (state._disconnectNotifyTimeout) clearTimeout(state._disconnectNotifyTimeout);
+      state._disconnectNotificationShown = false;
+      state._disconnectNotifyTimeout = setTimeout(() => {
+        if (state.connectionStatus === 'offline') {
+          showNotification('Verbindung unterbrochen', 'warning');
+          state._disconnectNotificationShown = true;
+        }
+        state._disconnectNotifyTimeout = null;
+      }, 15000);
 
-      // Auto-reconnect with exponential backoff
+      // Fallback: HTTP Health-Check während Reconnect-Versuchen
+      startLoginHealthCheck();
+
+      // Auto-reconnect: erster Versuch sofort (200ms), danach exponentieller Backoff
       state.wsReconnectAttempts++;
-      const delay = Math.min(1000 * Math.pow(2, state.wsReconnectAttempts), 30000); // Max 30s
+      const delay = state.wsReconnectAttempts === 1
+        ? 200
+        : Math.min(500 * Math.pow(2, state.wsReconnectAttempts - 1), 15000); // Max 15s
       console.log(`[WebSocket] Reconnecting in ${delay}ms (attempt ${state.wsReconnectAttempts})...`);
 
       setTimeout(() => {
@@ -122,7 +145,37 @@ function updateConnectionStatus() {
   if (!statusIndicator) return;
 
   statusIndicator.className = 'connection-status ' + state.connectionStatus;
-  statusIndicator.title = state.connectionStatus === 'online' ? 'Online' : 'Offline';
+  statusIndicator.title = state.connectionStatus === 'online' ? 'Verbunden' : 'Keine Verbindung';
+}
+
+// HTTP Health-Check für Login-Seite (läuft bevor WS verbunden ist)
+async function loginHealthCheck() {
+  try {
+    await fetch('/health');
+    if (state.connectionStatus !== 'online') {
+      state.connectionStatus = 'online';
+      updateConnectionStatus();
+    }
+  } catch {
+    if (state.connectionStatus !== 'offline') {
+      state.connectionStatus = 'offline';
+      updateConnectionStatus();
+    }
+  }
+}
+
+function startLoginHealthCheck() {
+  loginHealthCheck(); // Sofortiger Check
+  if (!state.loginHealthCheckInterval) {
+    state.loginHealthCheckInterval = setInterval(loginHealthCheck, 5000);
+  }
+}
+
+function stopLoginHealthCheck() {
+  if (state.loginHealthCheckInterval) {
+    clearInterval(state.loginHealthCheckInterval);
+    state.loginHealthCheckInterval = null;
+  }
 }
 
 function showNotification(message, type = 'info') {
@@ -209,6 +262,24 @@ function handleWebSocketEvent(event, data) {
       // Re-render theke if active (shows waiter columns)
       if (!$('#view-theke').classList.contains('hidden')) {
         renderTheke();
+      }
+      break;
+
+    case 'session:kicked':
+      // Theke hat diesen Bediener abgemeldet
+      if (state.role === 'waiter' && data.waiter === state.user) {
+        console.log('[WebSocket] Wurde von der Theke abgemeldet');
+        showNotification('Du wurdest von der Theke abgemeldet', 'warning');
+        // Heartbeat stoppen damit Session nicht neu angelegt wird
+        if (state.heartbeatInterval) {
+          clearInterval(state.heartbeatInterval);
+          state.heartbeatInterval = null;
+        }
+        // Nach kurzer Verzögerung (Meldung lesen) neu laden → Login-Seite
+        setTimeout(() => {
+          disconnectWebSocket();
+          location.reload();
+        }, 2500);
       }
       break;
 
@@ -502,7 +573,7 @@ on('#btn-login','click', async ()=>{
       await startHeartbeat();
       await requestWakeLock();
 
-      // 🚀 Connect WebSocket
+      // 🚀 Connect WebSocket (Health-Check läuft weiter bis WS-onopen stopLoginHealthCheck aufruft)
       connectWebSocket();
 
       renderTables();
@@ -525,7 +596,7 @@ on('#btn-login','click', async ()=>{
       await loadInitial();
       await requestWakeLock();
 
-      // 🚀 Connect WebSocket
+      // 🚀 Connect WebSocket (Health-Check läuft weiter bis WS-onopen stopLoginHealthCheck aufruft)
       connectWebSocket();
 
       renderTheke();
@@ -566,6 +637,9 @@ on('#btn-logout','click', async ()=>{
 
   // 🚀 Disconnect WebSocket
   disconnectWebSocket();
+
+  // Zurück zur Login-Seite: Health-Check neu starten für Verbindungsanzeige
+  startLoginHealthCheck();
 
   location.reload();
 });
@@ -743,6 +817,10 @@ function releaseWakeLock(){
 async function startHeartbeat(){
   if(state.role==='waiter' && state.user){
     await api('/api/sessions/heartbeat', {method:'POST', body:JSON.stringify({waiter:state.user})});
+    // Sofort lokal eintragen, damit die Anzeige nicht auf das WS-init-Event warten muss
+    if(!state.sessions.find(s=>s.waiter===state.user)){
+      state.sessions.push({ waiter:state.user, last_heartbeat:new Date().toISOString() });
+    }
     if(state.heartbeatInterval) clearInterval(state.heartbeatInterval);
     state.heartbeatInterval=setInterval(async ()=>{
       try{ await api('/api/sessions/heartbeat', {method:'POST', body:JSON.stringify({waiter:state.user})}); }catch{}
@@ -2259,11 +2337,33 @@ async function pollOrders(){
 
 $('#app-header').classList.add('hidden');
 show('#view-login');
+// Verbindungsanzeige schon auf der Login-Seite aktivieren
+startLoginHealthCheck();
 
-// Wake Lock bei Sichtbarkeitswechsel reaktivieren
+// iOS PWA: readonly in touchstart entfernen – natürlicher click-Event öffnet dann die Tastatur
+['#inp-name','#inp-pin'].forEach(sel=>{
+  const el=$(sel);
+  if(!el) return;
+  el.addEventListener('touchstart',()=>el.removeAttribute('readonly'),{passive:true});
+});
+
+// Wake Lock und WebSocket bei Sichtbarkeitswechsel reaktivieren (iOS Standby-Wakeup)
 document.addEventListener('visibilitychange', async ()=>{
-  if(!document.hidden && state.user && !state.wakeLock){
-    await requestWakeLock();
+  if(!document.hidden && state.user){
+    if(!state.wakeLock) await requestWakeLock();
+    // Sofortiger Reconnect-Versuch wenn WS nicht verbunden (z.B. nach Standby)
+    if(!state.ws || state.ws.readyState !== WebSocket.OPEN){
+      console.log('[WebSocket] Visibility restored – reconnecting immediately');
+      connectWebSocket();
+    }
+  }
+});
+
+// Sofortiger Reconnect wenn Netzwerk wieder verfügbar (z.B. nach WLAN-Trennung)
+window.addEventListener('online', () => {
+  if(state.user && (!state.ws || state.ws.readyState !== WebSocket.OPEN)){
+    console.log('[WebSocket] Network online – reconnecting immediately');
+    connectWebSocket();
   }
 });
 
