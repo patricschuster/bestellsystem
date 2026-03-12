@@ -3,7 +3,7 @@ const $  = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
 const on = (sel,evt,fn)=>{ const el=(typeof sel==='string')?$(sel):sel; if(el) el.addEventListener(evt,fn); };
 
-const state={ role:'waiter', user:null, tables:[], products:[], orders:[], config:{}, version:'2.7', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null };
+const state={ role:'waiter', user:null, tables:[], products:[], orders:[], config:{}, version:'2.8', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
 
 async function api(path, opts={}){ const res=await fetch(path,{ headers:{'Content-Type':'application/json'}, ...opts }); if(!res.ok){ let t=await res.text(); try{ const j=JSON.parse(t); t=j.error||j.message||t; }catch{}; throw new Error(t); } return res.json(); }
 
@@ -230,6 +230,7 @@ function handleWebSocketEvent(event, data) {
 
       // Play notification sound (optional)
       playNotificationSound();
+      maybeRefreshReport();
       break;
 
     case 'order:updated':
@@ -244,6 +245,7 @@ function handleWebSocketEvent(event, data) {
         state.orders.push(data);
         renderActiveView();
       }
+      maybeRefreshReport();
       break;
 
     case 'order:paid':
@@ -289,6 +291,7 @@ function handleWebSocketEvent(event, data) {
       if(!$('#view-tables').classList.contains('hidden')) renderTables();
       if(!$('#view-theke').classList.contains('hidden')) renderTheke();
       if(currentCashOrder && currentCashOrder.id===data.id){ currentCashOrder=null; show('#view-cash'); renderCash(); }
+      maybeRefreshReport();
       break;
 
     case 'products:updated':
@@ -324,9 +327,13 @@ function renderActiveView() {
   if (!$('#view-cash-detail').classList.contains('hidden') && currentCashOrder) openCashDetail(currentCashOrder.id);
   if (!$('#view-products').classList.contains('hidden')) renderProducts();
 }
+function maybeRefreshReport(){
+  if(!$('#admin-report').classList.contains('hidden')) adminReportLoad();
+}
 
 // Helper: Play notification sound (optional)
 function playNotificationSound() {
+  if (!state.soundEnabled) return;
   // Only play if user is not on tables view (where they created the order)
   if ($('#view-theke') && !$('#view-theke').classList.contains('hidden')) {
     try {
@@ -538,6 +545,8 @@ function updateHeader(viewId){
   $('#btn-pos-history').classList.toggle('hidden', !(viewId==='#view-theke' && state.role==='bar' && state.selectedStation===null));
   $('#btn-station-select').classList.toggle('hidden', !(state.role==='bar' && isThekeView && hasStationProducts));
   $('#btn-station-select').classList.toggle('active', state.selectedStation!==null);
+  $('#btn-sound-toggle').classList.toggle('hidden', !(state.role==='bar' && isThekeView));
+  $('#btn-sound-toggle .material-symbols-outlined').textContent=state.soundEnabled?'volume_up':'volume_off';
   $('#hdr-right').classList.toggle('hidden', viewId!=='#view-cash-detail');
   $('#btn-fav-settings').classList.toggle('hidden', !(state.role==='waiter' && isTablesView));
   $('#btn-fav-filter').classList.toggle('hidden', !(state.role==='waiter' && isTablesView));
@@ -670,6 +679,7 @@ on('#btn-logout','click', async ()=>{
 on('#btn-euro','click', ()=>{ renderCash(); show('#view-cash'); });
 on('#btn-back-header','click', ()=>{
   const currentView=$$('.view').find(v=>!v.classList.contains('hidden'));
+  if(currentView && currentView.id==='view-products' && addToOrderId){ addToOrderId=null; basket.clear(); openCashDetail(currentCashOrder.id); return; }
   if(currentView && currentView.id==='view-pos-history') show('#view-theke');
   else if(currentView && currentView.id==='view-cash-detail'){ renderCash(); show('#view-cash'); }
   else if(currentView && currentView.id==='view-cash') show('#view-tables');
@@ -677,6 +687,7 @@ on('#btn-back-header','click', ()=>{
 });
 on('#btn-send-header','click', ()=>sendOrder());
 on('#btn-pos-toggle','click', ()=>{ state.posMode=!state.posMode; $('#btn-pos-toggle').textContent=state.posMode?'POS: AN':'POS: AUS'; $('#btn-pos-toggle').classList.toggle('active', state.posMode); renderTheke(); updateHeader('#view-theke'); });
+on('#btn-sound-toggle','click', ()=>{ state.soundEnabled=!state.soundEnabled; localStorage.setItem('soundEnabled',state.soundEnabled?'on':'off'); updateHeader('#view-theke'); });
 on('#btn-pos-history','click', ()=>{ renderPOSHistory(); show('#view-pos-history'); });
 on('#btn-fav-filter','click', ()=>{ state.favoritesFilterActive=!state.favoritesFilterActive; renderTables(); updateHeader('#view-tables'); });
 on('#btn-fav-settings','click', ()=>openFavoritesSettings());
@@ -931,7 +942,9 @@ function showTableContextMenu(e,tableId){
 }
 let currentTable=null; let basket=new Map();
 let currentCommentProduct=null;
-function openProducts(tid){ currentTable=tid; $('#prod-table-label').textContent='Tisch '+tableDisplayNum(tid); basket.clear(); renderProducts(); show('#view-products'); }
+let addToOrderId=null;
+function openProducts(tid){ addToOrderId=null; currentTable=tid; $('#prod-table-label').textContent='Tisch '+tableDisplayNum(tid); basket.clear(); renderProducts(); show('#view-products'); }
+function openProductsForOrder(orderId){ const order=state.orders.find(o=>o.id===orderId); if(!order) return; addToOrderId=orderId; currentTable=order.table_id; $('#prod-table-label').textContent='Hinzufügen: Tisch '+tableDisplayNum(order.table_id); basket.clear(); renderProducts(); show('#view-products'); }
 function contrastColor(hex){ if(!hex) return '#0b0c0e'; const h=hex.replace('#',''); if(h.length!=6) return '#0b0c0e'; const r=parseInt(h[0]+h[1],16), g=parseInt(h[2]+h[3],16), b=parseInt(h[4]+h[5],16); const yiq=((r*299)+(g*587)+(b*114))/1000; return yiq>=160 ? '#0b0c0e':'#ffffff'; }
 function renderProducts(){
   const grid=$('#products-grid');
@@ -1046,7 +1059,24 @@ function orderItemsArray(){
   });
   return items;
 }
-async function sendOrder(){ if(basket.size===0) return alert('Bitte Produkte auswählen'); const items=orderItemsArray(); await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: currentTable, waiter: state.user, items })}); basket.clear(); state.orders=await api('/api/orders'); renderTables(); show('#view-tables'); }
+async function sendOrder(){
+  if(basket.size===0) return alert('Bitte Produkte auswählen');
+  const items=orderItemsArray();
+  if(addToOrderId){
+    await api(`/api/orders/${addToOrderId}/items`,{method:'POST',body:JSON.stringify({items})});
+    const oid=addToOrderId;
+    addToOrderId=null;
+    basket.clear();
+    state.orders=await api('/api/orders');
+    openCashDetail(oid);
+  } else {
+    await api('/api/orders',{method:'POST',body:JSON.stringify({table_id:currentTable,waiter:state.user,items})});
+    basket.clear();
+    state.orders=await api('/api/orders');
+    renderTables();
+    show('#view-tables');
+  }
+}
 
 /* Cash */
 function orderTotal(o){ return o.items.filter(it=>!it.paid&&!it.cancelled).reduce((s,it)=>s+it.price,0); }
@@ -1064,57 +1094,30 @@ function renderCash(){
     card.className='cash-card clickable';
     card.addEventListener('click',()=>openCashDetail(o.id));
 
-    const row=document.createElement('div');
-    row.className='row';
-    const left=document.createElement('div');
+    // Zeile 1: Tischnummer + Zeit (links) | Preis (rechts)
+    const topRow=document.createElement('div');
+    topRow.className='row';
     const tableLabel=o.waiter==='POS'?'POS':`Tisch ${tableDisplayNum(o.table_id)}`;
-    left.innerHTML=`<strong>${tableLabel}</strong> · <span class="muted">${fmtAgeMinutes(o.created_at)}</span>`;
-    const right=document.createElement('div');
-    right.style.display='flex';
-    right.style.flexDirection='column';
-    right.style.alignItems='flex-end';
-    right.style.gap='8px';
-    const price=document.createElement('div');
-    price.innerHTML=`<strong>${fmtEuro(orderTotal(o))}</strong>`;
+    const topLeft=document.createElement('div');
+    topLeft.style.fontSize='1.25rem';
+    topLeft.innerHTML=`<strong>${tableLabel}</strong> · <span class="muted">${fmtAgeMinutes(o.created_at)}</span>`;
+    const topRight=document.createElement('div');
+    topRight.style.fontSize='1.25rem';
+    topRight.innerHTML=`<strong>${fmtEuro(orderTotal(o))}</strong>`;
+    topRow.append(topLeft, topRight);
+    card.appendChild(topRow);
 
-    // Button-Container für Rückgeld + Alles kassiert
+    // Zeile 2: Buttons
     const btnRow=document.createElement('div');
-    btnRow.style.display='flex';
-    btnRow.style.gap='24px';
-    btnRow.style.width='100%';
+    btnRow.className='cash-card-actions';
 
-    // Rückgeld-Button
-    const changeBtn=document.createElement('button');
-    changeBtn.className='ghost';
-    changeBtn.style.padding='8px';
-    changeBtn.style.minHeight='40px';
-    changeBtn.title='Rückgeld berechnen';
-    changeBtn.innerHTML='<span class="material-symbols-outlined">calculate</span>';
-    changeBtn.addEventListener('click', (e)=>{
-      e.stopPropagation();
-      openChangeModal(orderTotal(o), o.id);
-    });
-
-    // Alles kassiert Button
-    const btn=document.createElement('button');
-    btn.className='primary';
-    btn.style.flex='1';
-    btn.innerHTML='<span class="material-symbols-outlined">check</span> Alles kassiert';
-    btn.addEventListener('click', async (e)=>{
-      e.stopPropagation();
-      await api(`/api/orders/${o.id}/pay`,{method:'POST'});
-      state.orders=await api('/api/orders');
-      renderCash();
-      renderTables();
-    });
-
-    // Stornieren-Button (nur wenn kein Item bezahlt) – gleicher Style wie Rückgeld-Button
+    // Stornieren (nur wenn kein Item bezahlt)
     const canCancel=o.items.every(it=>!it.paid);
     if(canCancel){
       const cancelBtn=document.createElement('button');
       cancelBtn.className='btn-cancel-order ghost';
-      cancelBtn.style.padding='8px';
-      cancelBtn.style.minHeight='40px';
+      cancelBtn.style.padding='16px';
+      cancelBtn.style.minHeight='56px';
       cancelBtn.title='Bestellung stornieren';
       cancelBtn.innerHTML='<span class="material-symbols-outlined">delete</span>';
       cancelBtn.addEventListener('click',async(e)=>{
@@ -1124,13 +1127,52 @@ function renderCash(){
         state.orders=await api('/api/orders');
         renderCash(); renderTables();
       });
-      btnRow.append(cancelBtn, changeBtn, btn);
-    } else {
-      btnRow.append(changeBtn, btn);
+      btnRow.appendChild(cancelBtn);
     }
-    right.append(price, btnRow);
-    row.append(left,right);
-    card.appendChild(row);
+
+    // Hinzufügen
+    const addBtn=document.createElement('button');
+    addBtn.className='ghost';
+    addBtn.style.padding='16px';
+    addBtn.style.minHeight='56px';
+    addBtn.title='Produkte hinzufügen';
+    addBtn.innerHTML='<span class="material-symbols-outlined">add</span>';
+    addBtn.addEventListener('click',(e)=>{
+      e.stopPropagation();
+      openProductsForOrder(o.id);
+    });
+    btnRow.appendChild(addBtn);
+
+    // Rückgeld
+    const changeBtn=document.createElement('button');
+    changeBtn.className='ghost';
+    changeBtn.style.padding='16px';
+    changeBtn.style.minHeight='56px';
+    changeBtn.title='Rückgeld berechnen';
+    changeBtn.innerHTML='<span class="material-symbols-outlined">calculate</span>';
+    changeBtn.addEventListener('click',(e)=>{
+      e.stopPropagation();
+      openChangeModal(orderTotal(o), o.id);
+    });
+    btnRow.appendChild(changeBtn);
+
+    // Alles kassiert
+    const btn=document.createElement('button');
+    btn.className='primary';
+    btn.style.flex='1';
+    btn.style.padding='16px 9px';
+    btn.style.minHeight='56px';
+    btn.innerHTML='<span class="material-symbols-outlined">check</span> Alles kassiert';
+    btn.addEventListener('click',async(e)=>{
+      e.stopPropagation();
+      await api(`/api/orders/${o.id}/pay`,{method:'POST'});
+      state.orders=await api('/api/orders');
+      renderCash();
+      renderTables();
+    });
+    btnRow.appendChild(btn);
+
+    card.appendChild(btnRow);
     wrap.appendChild(card);
   });
 }
@@ -1308,7 +1350,12 @@ function renderCashDetail(){
     show('#view-cash');
   });
 
-  actions.append(paySelectedBtn,payAllBtn);
+  const addBtn=document.createElement('button');
+  addBtn.className='outline';
+  addBtn.innerHTML='<span class="material-symbols-outlined">add</span> Hinzufügen';
+  addBtn.addEventListener('click',()=>openProductsForOrder(currentCashOrder.id));
+
+  actions.append(addBtn,paySelectedBtn,payAllBtn);
   wrap.appendChild(actions);
 }
 

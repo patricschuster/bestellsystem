@@ -110,10 +110,11 @@ textarea{resize:vertical;min-height:80px}
 .grid.products .product-btn.product-v1 .topbar{height:45px}
 .sticky-footer{position:sticky;bottom:8px;margin-top:12px;display:flex;justify-content:space-between;gap:8px;background:rgba(255,255,255,.85);border:1px solid #eee;padding:8px 10px;border-radius:14px;backdrop-filter:blur(6px)}
 .cash-list{display:flex;flex-direction:column;gap:12px}
-.cash-card{background:#fff;border:1px solid #eee;border-radius:14px;box-shadow:0 6px 16px rgba(0,0,0,.06);padding:12px}
+.cash-card{background:#fff;border:1px solid #eee;border-radius:14px;box-shadow:0 6px 16px rgba(0,0,0,.06);padding:15px}
 .cash-card.clickable{cursor:pointer;transition:transform 0.2s,box-shadow 0.2s}
 .cash-card.clickable:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.12)}
 .cash-card .row{display:flex;align-items:center;justify-content:space-between}
+.cash-card-actions{display:flex;gap:8px;margin-top:20px;align-items:center}
 .icon-btn{min-height:auto;padding:8px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center}
 .cash-detail-items{display:flex;flex-direction:column;gap:10px;margin-bottom:20px}
 .cash-detail-item{background:#fff;border:2px solid #eee;border-radius:12px;padding:12px;display:flex;justify-content:space-between;cursor:pointer;transition:all 0.2s}

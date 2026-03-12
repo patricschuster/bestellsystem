@@ -552,8 +552,34 @@ app.delete('/api/orders/:id', (req,res)=>{
   return ok(res);
 });
 
+// Bestellung nachträglich ergänzen
+app.post('/api/orders/:id/items',(req,res)=>{
+  const id=+req.params.id;
+  const order=db.prepare('SELECT * FROM orders WHERE id=?').get(id);
+  if(!order) return res.status(404).json({error:'not found'});
+  if(order.status==='paid'||order.status==='cancelled') return res.status(400).json({error:'order not modifiable'});
+  const {items}=req.body;
+  if(!Array.isArray(items)||items.length===0) return res.status(400).json({error:'items required'});
+  const get=db.prepare('SELECT price_cents FROM products WHERE id=?');
+  const ins=db.prepare('INSERT INTO order_items(order_id,product_id,ready,price_cents,comment) VALUES(?,?,0,?,?)');
+  const tx=db.transaction(()=>{
+    for(const item of items){
+      const pid=typeof item==='object'?item.product_id:item;
+      const comment=typeof item==='object'?item.comment:null;
+      const p=get.get(pid);
+      if(!p) throw new Error('invalid product id: '+pid);
+      ins.run(id,pid,p.price_cents,comment);
+    }
+    db.prepare("UPDATE orders SET status='open' WHERE id=? AND status='ready'").run(id);
+  });
+  try{ tx(); }catch(e){ return res.status(400).json({error:e.message}); }
+  const updatedOrder=getOrderWithItems(id);
+  if(updatedOrder) broadcast('order:updated',updatedOrder);
+  return ok(res);
+});
+
 // Report
-app.get('/api/report/summary', (_req,res)=>{ const sum=db.prepare('SELECT COALESCE(SUM(price_cents),0) AS cents FROM order_items').get(); const counts=db.prepare('SELECT p.name, COUNT(*) AS qty FROM order_items oi JOIN products p ON p.id=oi.product_id GROUP BY p.id ORDER BY qty DESC').all(); res.json({ total:(sum.cents||0)/100, products:counts }); });
+app.get('/api/report/summary', (_req,res)=>{ const sum=db.prepare('SELECT COALESCE(SUM(price_cents),0) AS cents FROM order_items WHERE cancelled=0').get(); const counts=db.prepare('SELECT p.name, COUNT(*) AS qty FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE oi.cancelled=0 GROUP BY p.id ORDER BY qty DESC').all(); res.json({ total:(sum.cents||0)/100, products:counts }); });
 app.post('/api/report/reset', (_req,res)=>{ const tx=db.transaction(()=>{ db.prepare('DELETE FROM order_items').run(); db.prepare('DELETE FROM orders').run(); }); tx(); return ok(res); });
 
 app.use(express.static(path.join(__dirname,'public')));
