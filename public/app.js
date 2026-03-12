@@ -3,7 +3,7 @@ const $  = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
 const on = (sel,evt,fn)=>{ const el=(typeof sel==='string')?$(sel):sel; if(el) el.addEventListener(evt,fn); };
 
-const state={ role:'waiter', user:null, tables:[], products:[], orders:[], config:{}, version:'2.5', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null };
+const state={ role:'waiter', user:null, tables:[], products:[], orders:[], config:{}, version:'2.6', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null };
 
 async function api(path, opts={}){ const res=await fetch(path,{ headers:{'Content-Type':'application/json'}, ...opts }); if(!res.ok){ let t=await res.text(); try{ const j=JSON.parse(t); t=j.error||j.message||t; }catch{}; throw new Error(t); } return res.json(); }
 
@@ -283,6 +283,21 @@ function handleWebSocketEvent(event, data) {
       }
       break;
 
+    case 'products:updated':
+      state.products = data;
+      if (!$('#view-products').classList.contains('hidden')) renderProducts();
+      break;
+
+    case 'tables:updated':
+      state.tables = data;
+      if (!$('#view-tables').classList.contains('hidden')) renderTables();
+      break;
+
+    case 'config:updated':
+      state.config = data;
+      if (!$('#view-tables').classList.contains('hidden')) renderTables();
+      break;
+
     case 'pong':
       // Pong response from server
       console.log('[WebSocket] Pong received');
@@ -336,11 +351,12 @@ function fmtAgeMinutes(s){ const d=toDate(s); const m=Math.max(0,Math.floor((Dat
 /* Favorites Management */
 function loadFavorites(){ if(!state.user) return; try{ const key=`favorites_${state.user}`; const data=localStorage.getItem(key); if(data){ const arr=JSON.parse(data); state.favorites=new Set(arr); } }catch{ state.favorites=new Set(); } }
 function saveFavorites(){ if(!state.user) return; try{ const key=`favorites_${state.user}`; const arr=Array.from(state.favorites); localStorage.setItem(key,JSON.stringify(arr)); }catch{} }
+function tableDisplayNum(tableId){ const list=state.tables.filter(t=>t.name!=='POS'); const idx=list.findIndex(t=>t.id===tableId); return idx>=0?idx+1:tableId; }
 function toggleFavorite(tableId){ if(state.favorites.has(tableId)){ state.favorites.delete(tableId); } else { state.favorites.add(tableId); } saveFavorites(); }
 function clearAllFavorites(){ state.favorites.clear(); saveFavorites(); }
 function openFavoritesSettings(){ renderFavoritesSettings(); $('#fav-settings-modal').classList.remove('hidden'); }
 function closeFavoritesSettings(){ $('#fav-settings-modal').classList.add('hidden'); }
-function renderFavoritesSettings(){ const list=$('#fav-settings-list'); list.innerHTML=''; state.tables.forEach(t=>{ const item=document.createElement('div'); item.className='fav-setting-item'; const checkbox=document.createElement('input'); checkbox.type='checkbox'; checkbox.id=`fav-chk-${t.id}`; checkbox.checked=state.favorites.has(t.id); checkbox.addEventListener('change',()=>{ toggleFavorite(t.id); renderTables(); }); const label=document.createElement('label'); label.htmlFor=`fav-chk-${t.id}`; label.textContent=`Tisch ${t.id}`; item.append(checkbox,label); list.appendChild(item); }); }
+function renderFavoritesSettings(){ const list=$('#fav-settings-list'); list.innerHTML=''; state.tables.forEach(t=>{ const item=document.createElement('div'); item.className='fav-setting-item'; const checkbox=document.createElement('input'); checkbox.type='checkbox'; checkbox.id=`fav-chk-${t.id}`; checkbox.checked=state.favorites.has(t.id); checkbox.addEventListener('change',()=>{ toggleFavorite(t.id); renderTables(); }); const label=document.createElement('label'); label.htmlFor=`fav-chk-${t.id}`; label.textContent=`Tisch ${tableDisplayNum(t.id)}`; item.append(checkbox,label); list.appendChild(item); }); }
 
 /* Comment Dialog */
 function openCommentDialog(productId){
@@ -858,7 +874,7 @@ function renderTables(){
     b.dataset.tableId=t.id;
 
     const num=document.createElement('span');
-    num.textContent=t.id;
+    num.textContent=tableDisplayNum(t.id);
     b.appendChild(num);
 
     if(state.favorites.has(t.id)){
@@ -907,7 +923,7 @@ function showTableContextMenu(e,tableId){
 }
 let currentTable=null; let basket=new Map();
 let currentCommentProduct=null;
-function openProducts(tid){ currentTable=tid; $('#prod-table-label').textContent='Tisch '+tid; basket.clear(); renderProducts(); show('#view-products'); }
+function openProducts(tid){ currentTable=tid; $('#prod-table-label').textContent='Tisch '+tableDisplayNum(tid); basket.clear(); renderProducts(); show('#view-products'); }
 function contrastColor(hex){ if(!hex) return '#0b0c0e'; const h=hex.replace('#',''); if(h.length!=6) return '#0b0c0e'; const r=parseInt(h[0]+h[1],16), g=parseInt(h[2]+h[3],16), b=parseInt(h[4]+h[5],16); const yiq=((r*299)+(g*587)+(b*114))/1000; return yiq>=160 ? '#0b0c0e':'#ffffff'; }
 function renderProducts(){
   const grid=$('#products-grid');
@@ -1043,7 +1059,7 @@ function renderCash(){
     const row=document.createElement('div');
     row.className='row';
     const left=document.createElement('div');
-    const tableLabel=o.waiter==='POS'?'POS':`Tisch ${o.table_id}`;
+    const tableLabel=o.waiter==='POS'?'POS':`Tisch ${tableDisplayNum(o.table_id)}`;
     left.innerHTML=`<strong>${tableLabel}</strong> · <span class="muted">${fmtAgeMinutes(o.created_at)}</span>`;
     const right=document.createElement('div');
     right.style.display='flex';
@@ -1103,7 +1119,7 @@ function openCashDetail(orderId){
   renderCashDetail();
   show('#view-cash-detail');
   const hdrRight=$('#hdr-right');
-  const tableName=`Tisch ${currentCashOrder.table_id}`;
+  const tableName=`Tisch ${tableDisplayNum(currentCashOrder.table_id)}`;
   hdrRight.innerHTML=`<strong>${tableName}</strong> · <span class="muted">${fmtAgeMinutes(currentCashOrder.created_at)}</span>`;
   hdrRight.classList.remove('hidden');
 }
@@ -1384,7 +1400,7 @@ function renderStationMode(){
     badge.style.fontWeight='bold';
     badge.textContent=group.items.length;
 
-    const tableNums=[...new Set(group.items.map(it=>it.waiter==='POS'?'POS':`T${it.table_id}`))].join(', ');
+    const tableNums=[...new Set(group.items.map(it=>it.waiter==='POS'?'POS':`T${tableDisplayNum(it.table_id)}`))].join(', ');
 
     // Kommentar anzeigen (falls vorhanden)
     let commentDiv=null;
@@ -1555,7 +1571,7 @@ function renderKitchenMode(){
         const meta=document.createElement('div');
         meta.className='meta';
         const h=document.createElement('div');
-        const tableLabel=o.waiter==='POS'?'POS':`Tisch ${o.table_id}`;
+        const tableLabel=o.waiter==='POS'?'POS':`Tisch ${tableDisplayNum(o.table_id)}`;
         h.innerHTML=`<strong>${tableLabel}</strong>`;
         const t=document.createElement('div');
         t.className='time';
@@ -1729,7 +1745,7 @@ function renderBedienerColumn(container){
         const meta=document.createElement('div');
         meta.className='meta';
         const h=document.createElement('div');
-        const tableLabel=o.waiter==='POS'?'POS':`Tisch ${o.table_id}`;
+        const tableLabel=o.waiter==='POS'?'POS':`Tisch ${tableDisplayNum(o.table_id)}`;
         h.innerHTML=`<strong>${tableLabel}</strong>`;
         const t=document.createElement('div');
         t.className='time';
@@ -2011,7 +2027,7 @@ function renderPOSHistory(){
     const createdDate=toDate(o.created_at);
     const timeStr=createdDate.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
     const dateStr=createdDate.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'});
-    const tableLabel=o.waiter==='POS'?'POS':`Tisch ${o.table_id}`;
+    const tableLabel=o.waiter==='POS'?'POS':`Tisch ${tableDisplayNum(o.table_id)}`;
     left.innerHTML=`<strong>${o.waiter} #${o.id}</strong> · <span class="muted">${tableLabel} · ${dateStr} ${timeStr}</span>`;
 
     const middle=document.createElement('div');
@@ -2055,7 +2071,7 @@ function renderPOSHistory(){
 
 /* Admin */
 async function adminInit(){ $$('.admin-tabs .tab').forEach(btn=>on(btn,'click',()=>{ $$('.admin-tabs .tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); const tab=btn.dataset.tab; $$('.admin-section').forEach(s=>s.classList.add('hidden')); if(tab==='tables'){ $('#admin-tables').classList.remove('hidden'); adminTablesLoad(); } if(tab==='products'){ $('#admin-products').classList.remove('hidden'); adminProductsLoad(); } if(tab==='stations'){ $('#admin-stations').classList.remove('hidden'); adminStationsLoad(); } if(tab==='report'){ $('#admin-report').classList.remove('hidden'); adminReportLoad(); } if(tab==='system'){ $('#admin-system').classList.remove('hidden'); adminSystemLoad(); } })); adminTablesLoad(); on('#btn-save-cols','click', adminSaveCols); on('#btn-save-theke-layout','click', adminSaveThekeLayout); on('#btn-apply-tables','click', adminApplyTables); on('#btn-add-product','click', adminAddProduct); on('#btn-add-station','click', adminAddStation); on('#btn-refresh-report','click', adminReportLoad); on('#btn-reset-report','click', adminResetReport); on('#btn-refresh-logs','click', adminSystemLoad); on('#btn-save-pin-bar','click', adminSavePinBar); on('#btn-save-pin-admin','click', adminSavePinAdmin); }
-async function adminTablesLoad(){ state.config=await api('/api/config'); $('#cfg-cols').value=state.config.grid_cols??4; $('#cfg-theke-layout').value=(state.config.theke_layout??'badges'); const tables=await api('/api/tables'); $('#tbl-count').textContent=tables.length; $('#tbl-target').value=tables.length; const prev=$('#admin-tables-preview'); prev.innerHTML=''; prev.style.setProperty('--cols', Math.max(3, Math.min(6, +($('#cfg-cols').value||4)))); tables.forEach(t=>{ const b=document.createElement('button'); b.className='table-btn'; b.textContent=t.id; prev.appendChild(b); }); }
+async function adminTablesLoad(){ state.config=await api('/api/config'); $('#cfg-cols').value=state.config.grid_cols??4; $('#cfg-theke-layout').value=(state.config.theke_layout??'badges'); const tables=await api('/api/tables'); $('#tbl-count').textContent=tables.length; $('#tbl-target').value=tables.length; const prev=$('#admin-tables-preview'); prev.innerHTML=''; prev.style.setProperty('--cols', Math.max(3, Math.min(6, +($('#cfg-cols').value||4)))); tables.forEach((t,i)=>{ const b=document.createElement('button'); b.className='table-btn'; b.textContent=i+1; prev.appendChild(b); }); }
 async function adminSaveCols(){ const n=Math.max(3,Math.min(6,+($('#cfg-cols').value||4))); await api('/api/config',{method:'PUT', body:JSON.stringify({grid_cols:n})}); state.config.grid_cols=n; await adminTablesLoad(); }
 async function adminSaveThekeLayout(){ const v=$('#cfg-theke-layout').value||'badges'; await api('/api/config',{method:'PUT', body:JSON.stringify({theke_layout:v})}); state.config.theke_layout=v; await adminTablesLoad(); }
 async function adminApplyTables(){ const target=Math.max(1,Math.min(200, +($('#tbl-target').value||16))); const tables=await api('/api/tables'); const diff=target-tables.length; if(diff===0) return; if(diff>0){ for(let i=0;i<diff;i++) await api('/api/tables',{method:'POST', body:JSON.stringify({name:null})}); } else { const ids=tables.map(t=>t.id).sort((a,b)=>b-a).slice(0,-diff); for(const id of ids) await api(`/api/tables/${id}`,{method:'DELETE'}); } await adminTablesLoad(); }
@@ -2065,7 +2081,7 @@ async function adminProductsLoad(){ const list=await api('/api/products'); state
   let lastColorInput=null;
   $$('.prod-color').forEach(inp=>{ inp.addEventListener('focus',()=>lastColorInput=inp); inp.addEventListener('click',()=>lastColorInput=inp); });
   $$('#fav-colors .swatch').forEach(s=> s.addEventListener('click',()=>{ const c=s.dataset.color; if(lastColorInput) lastColorInput.value=c; }));
-  on('#btn-save-all-products','click', async ()=>{ const rows=$$('#prod-table tbody tr'); const ops=[]; rows.forEach(tr=>{ const id=+tr.dataset.id; const name=$(`input[data-id="${id}"][data-k="name"]`).value.trim(); const price=priceToNumber($(`input[data-id="${id}"][data-k="price"]`).value); const active=$(`input[data-id="${id}"][data-k="active"]`).checked; const half=$(`input[data-id="${id}"][data-k="half"]`).checked; const color=$(`input[data-id="${id}"][data-k="color"]`).value||null; const station=$(`select[data-id="${id}"][data-k="station"]`).value||null; const cur=state.products.find(p=>p.id===id)||{}; const changed=(name!==cur.name)||(Math.abs(price-(cur.price||0))>1e-9)||(!!active!==!!cur.active)||((color||null)!==(cur.color||null))||(!!half!==!!cur.half)||((station||null)!==(cur.station||null)); if(changed) ops.push(api(`/api/products/${id}`,{method:'PUT', body:JSON.stringify({name,price,active,color,half,station})})); }); if(ops.length===0) return alert('Keine Änderungen'); await Promise.all(ops); await adminProductsLoad(); alert('Änderungen gespeichert'); });
+  $('#btn-save-all-products').onclick = async ()=>{ const rows=$$('#prod-table tbody tr'); const ops=[]; rows.forEach(tr=>{ const id=+tr.dataset.id; const name=$(`input[data-id="${id}"][data-k="name"]`).value.trim(); const price=priceToNumber($(`input[data-id="${id}"][data-k="price"]`).value); const active=$(`input[data-id="${id}"][data-k="active"]`).checked; const half=$(`input[data-id="${id}"][data-k="half"]`).checked; const color=$(`input[data-id="${id}"][data-k="color"]`).value||null; const station=$(`select[data-id="${id}"][data-k="station"]`).value||null; const cur=state.products.find(p=>p.id===id)||{}; const changed=(name!==cur.name)||(Math.abs(price-(cur.price||0))>1e-9)||(!!active!==!!cur.active)||((color||null)!==(cur.color||null))||(!!half!==!!cur.half)||((station||null)!==(cur.station||null)); if(changed) ops.push(api(`/api/products/${id}`,{method:'PUT', body:JSON.stringify({name,price,active,color,half,station})})); }); if(ops.length===0) return showNotification('Keine Änderungen', 'info'); await Promise.all(ops); await adminProductsLoad(); showNotification('Änderungen gespeichert', 'success'); };
 }
 
 async function adminStationsLoad(){
@@ -2340,11 +2356,11 @@ show('#view-login');
 // Verbindungsanzeige schon auf der Login-Seite aktivieren
 startLoginHealthCheck();
 
-// iOS PWA: readonly in touchstart entfernen – natürlicher click-Event öffnet dann die Tastatur
+// iOS PWA + Desktop: readonly bei pointerdown entfernen (deckt Touch und Maus ab)
 ['#inp-name','#inp-pin'].forEach(sel=>{
   const el=$(sel);
   if(!el) return;
-  el.addEventListener('touchstart',()=>el.removeAttribute('readonly'),{passive:true});
+  el.addEventListener('pointerdown',()=>el.removeAttribute('readonly'),{passive:true});
 });
 
 // Wake Lock und WebSocket bei Sichtbarkeitswechsel reaktivieren (iOS Standby-Wakeup)

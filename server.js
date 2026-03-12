@@ -163,7 +163,7 @@ app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.4.1', time:new Da
 
 // Config
 app.get('/api/config', (_req,res)=> res.json(readConfigMap()));
-app.put('/api/config', (req,res)=>{ const tx=db.transaction(entries=>{ for(const [k,v] of entries) writeConfigEntry(k,v); }); tx(Object.entries(req.body||{})); return ok(res); });
+app.put('/api/config', (req,res)=>{ const tx=db.transaction(entries=>{ for(const [k,v] of entries) writeConfigEntry(k,v); }); tx(Object.entries(req.body||{})); broadcast('config:updated', readConfigMap()); return ok(res); });
 
 // Authentication & PINs
 // Master PIN is loaded from environment variable for security
@@ -249,6 +249,7 @@ app.put('/api/settings/pins', validate(pinUpdateSchema), (req, res) => {
 });
 
 // Products
+function getProductsList(){ const rows=db.prepare('SELECT id,name,price_cents,active,color,half,station FROM products').all(); const order=(readConfigMap().product_order)||[]; const idx=new Map(order.map((id,i)=>[id,i])); rows.sort((a,b)=>((idx.get(a.id)??1e9)-(idx.get(b.id)??1e9))||(a.id-b.id)); return rows.map(p=>({...p,price:p.price_cents/100})); }
 app.get('/api/products', (_req,res)=>{
   const rows=db.prepare('SELECT id,name,price_cents,active,color,half,station FROM products').all();
   const order=(readConfigMap().product_order)||[];
@@ -261,6 +262,7 @@ app.post('/api/products', validate(productSchema), (req,res)=>{
   const info=db.prepare('INSERT INTO products(name,price_cents,active,color,half,station) VALUES(?,?,?,?,?,?)').run(name, Math.round(price*100), active?1:0, color||null, half?1:0, station);
   const out=db.prepare('SELECT id,name,price_cents,active,color,half,station FROM products WHERE id=?').get(info.lastInsertRowid);
   const order=(readConfigMap().product_order)||[]; order.push(out.id); writeConfigEntry('product_order',order);
+  broadcast('products:updated', getProductsList());
   res.status(201).json({ ...out, price: out.price_cents/100 });
 });
 app.put('/api/products/order', (req,res)=>{
@@ -268,6 +270,7 @@ app.put('/api/products/order', (req,res)=>{
   if(!arr) return res.status(400).json({error:'order[] required'});
   const ids=db.prepare('SELECT id FROM products').all().map(r=>r.id);
   writeConfigEntry('product_order', arr.filter(id=>ids.includes(id)));
+  broadcast('products:updated', getProductsList());
   return ok(res);
 });
 app.put('/api/products/:id', (req,res)=>{
@@ -276,6 +279,7 @@ app.put('/api/products/:id', (req,res)=>{
   db.prepare('UPDATE products SET name=?, price_cents=?, active=?, color=?, half=?, station=? WHERE id=?')
     .run(name??cur.name, price!==undefined?Math.round(price*100):cur.price_cents, active!==undefined?(active?1:0):cur.active, color!==undefined?color:cur.color, half!==undefined?(half?1:0):cur.half, station!==undefined?station:cur.station, id);
   const out=db.prepare('SELECT id,name,price_cents,active,color,half,station FROM products WHERE id=?').get(id);
+  broadcast('products:updated', getProductsList());
   res.json({ ...out, price: out.price_cents/100 });
 });
 app.delete('/api/products/:id', (req,res)=>{
@@ -283,13 +287,14 @@ app.delete('/api/products/:id', (req,res)=>{
   db.prepare('DELETE FROM products WHERE id=?').run(id);
   const order=(readConfigMap().product_order)||[];
   writeConfigEntry('product_order',order.filter(x=>x!==id));
+  broadcast('products:updated', getProductsList());
   return ok(res);
 });
 
 // Tables
 app.get('/api/tables', (_req,res)=> res.json(db.prepare('SELECT id,name FROM tables ORDER BY id').all()));
-app.post('/api/tables', (req,res)=>{ const info=db.prepare('INSERT INTO tables(name) VALUES(?)').run(req.body?.name||null); res.status(201).json(db.prepare('SELECT id,name FROM tables WHERE id=?').get(info.lastInsertRowid)); });
-app.delete('/api/tables/:id', (req,res)=>{ db.prepare('DELETE FROM tables WHERE id=?').run(+req.params.id); return ok(res); });
+app.post('/api/tables', (req,res)=>{ const info=db.prepare('INSERT INTO tables(name) VALUES(?)').run(req.body?.name||null); broadcast('tables:updated', db.prepare('SELECT id,name FROM tables ORDER BY id').all()); res.status(201).json(db.prepare('SELECT id,name FROM tables WHERE id=?').get(info.lastInsertRowid)); });
+app.delete('/api/tables/:id', (req,res)=>{ db.prepare('DELETE FROM tables WHERE id=?').run(+req.params.id); broadcast('tables:updated', db.prepare('SELECT id,name FROM tables ORDER BY id').all()); return ok(res); });
 
 // Waiter Sessions
 app.get('/api/sessions', (_req,res)=>{
