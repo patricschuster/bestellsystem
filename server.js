@@ -373,9 +373,9 @@ app.get('/api/system/status', (_req,res)=>{
 
 // Orders
 app.get('/api/orders', (_req,res)=>{
-  let orders=db.prepare('SELECT * FROM orders ORDER BY datetime(created_at) DESC').all();
-  const itemsStmt=db.prepare('SELECT oi.id, oi.product_id, oi.ready, oi.paid, oi.comment, p.name, p.price_cents FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE order_id=?');
-  res.json(orders.map(o=>({ ...o, items: itemsStmt.all(o.id).map(i=>({ id:i.id, product_id:i.product_id, name:i.name, ready:!!i.ready, paid:!!i.paid, price:i.price_cents/100, comment:i.comment||null })) })));
+  let orders=db.prepare("SELECT * FROM orders WHERE status NOT IN ('paid','cancelled') ORDER BY datetime(created_at) DESC").all();
+  const itemsStmt=db.prepare('SELECT oi.id, oi.product_id, oi.ready, oi.paid, oi.cancelled, oi.comment, p.name, p.price_cents FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE order_id=?');
+  res.json(orders.map(o=>({ ...o, items: itemsStmt.all(o.id).map(i=>({ id:i.id, product_id:i.product_id, name:i.name, ready:!!i.ready, paid:!!i.paid, cancelled:!!i.cancelled, price:i.price_cents/100, comment:i.comment||null })) })));
 });
 app.post('/api/orders', validate(orderSchema), (req,res)=>{
   try{
@@ -416,7 +416,7 @@ app.patch('/api/orders/:id/items/:itemId/toggle-ready', (req,res)=>{
   if(!item) return res.status(404).json({error:'item not found'});
   const nr=item.ready?0:1;
   db.prepare('UPDATE order_items SET ready=? WHERE id=?').run(nr,itemId);
-  const flags=db.prepare('SELECT ready FROM order_items WHERE order_id=?').all(id).map(r=>!!r.ready);
+  const flags=db.prepare('SELECT ready FROM order_items WHERE order_id=? AND cancelled=0').all(id).map(r=>!!r.ready);
   const status=(flags.length>0 && flags.every(Boolean))?'ready':'open';
   db.prepare('UPDATE orders SET status=? WHERE id=?').run(status,id);
 
@@ -434,7 +434,7 @@ app.post('/api/orders/:id/items/:itemId/ready', (req,res)=>{
   const item=db.prepare('SELECT * FROM order_items WHERE id=? AND order_id=?').get(itemId,id);
   if(!item) return res.status(404).json({error:'item not found'});
   db.prepare('UPDATE order_items SET ready=1 WHERE id=?').run(itemId);
-  const flags=db.prepare('SELECT ready FROM order_items WHERE order_id=?').all(id).map(r=>!!r.ready);
+  const flags=db.prepare('SELECT ready FROM order_items WHERE order_id=? AND cancelled=0').all(id).map(r=>!!r.ready);
   const status=(flags.length>0 && flags.every(Boolean))?'ready':'open';
   db.prepare('UPDATE orders SET status=? WHERE id=?').run(status,id);
 
@@ -492,8 +492,8 @@ app.post('/api/orders/:id/pay-items', (req,res)=>{
       db.prepare('UPDATE order_items SET paid=1 WHERE id=? AND order_id=?').run(+itemId,orderId);
     });
 
-    const allItems=db.prepare('SELECT paid FROM order_items WHERE order_id=?').all(orderId);
-    const allPaid=allItems.length>0 && allItems.every(i=>i.paid===1);
+    const allItems=db.prepare('SELECT paid, cancelled FROM order_items WHERE order_id=?').all(orderId);
+    const allPaid=allItems.length>0 && allItems.every(i=>i.paid===1 || i.cancelled===1);
 
     if(allPaid){
       db.prepare("UPDATE orders SET status='paid' WHERE id=?").run(orderId);
@@ -513,6 +513,42 @@ app.post('/api/orders/:id/pay-items', (req,res)=>{
     }
   }
 
+  return ok(res);
+});
+
+// Storno: einzelnes Item stornieren
+app.delete('/api/orders/:id/items/:itemId', (req,res)=>{
+  const id=+req.params.id; const itemId=+req.params.itemId;
+  const item=db.prepare('SELECT * FROM order_items WHERE id=? AND order_id=?').get(itemId,id);
+  if(!item) return res.status(404).json({error:'item not found'});
+  if(item.paid) return res.status(400).json({error:'item already paid'});
+  db.prepare('UPDATE order_items SET cancelled=1 WHERE id=?').run(itemId);
+  const remaining=db.prepare('SELECT paid, cancelled FROM order_items WHERE order_id=?').all(id);
+  const allDone=remaining.every(i=>i.paid===1||i.cancelled===1);
+  const anyPaid=remaining.some(i=>i.paid===1);
+  if(allDone && !anyPaid){
+    db.prepare("UPDATE orders SET status='cancelled' WHERE id=?").run(id);
+    broadcast('order:cancelled',{id});
+  } else if(allDone && anyPaid){
+    db.prepare("UPDATE orders SET status='paid' WHERE id=?").run(id);
+    broadcast('order:paid',{id});
+  } else {
+    const updatedOrder=getOrderWithItems(id);
+    if(updatedOrder) broadcast('order:updated',updatedOrder);
+  }
+  return ok(res);
+});
+
+// Storno: gesamte Bestellung stornieren
+app.delete('/api/orders/:id', (req,res)=>{
+  const id=+req.params.id;
+  const order=db.prepare('SELECT * FROM orders WHERE id=?').get(id);
+  if(!order) return res.status(404).json({error:'not found'});
+  const anyPaid=db.prepare('SELECT COUNT(*) as n FROM order_items WHERE order_id=? AND paid=1').get(id).n>0;
+  if(anyPaid) return res.status(400).json({error:'cannot cancel: items already paid'});
+  db.prepare('UPDATE order_items SET cancelled=1 WHERE order_id=?').run(id);
+  db.prepare("UPDATE orders SET status='cancelled' WHERE id=?").run(id);
+  broadcast('order:cancelled',{id});
   return ok(res);
 });
 
@@ -557,7 +593,7 @@ wss.on('connection', (ws, req) => {
 
   // Send initial data to newly connected client
   try {
-    const orders = db.prepare("SELECT * FROM orders WHERE status != 'paid' ORDER BY datetime(created_at) DESC").all();
+    const orders = db.prepare("SELECT * FROM orders WHERE status NOT IN ('paid','cancelled') ORDER BY datetime(created_at) DESC").all();
     const itemsStmt = db.prepare('SELECT oi.id, oi.product_id, oi.ready, oi.paid, oi.comment, p.name, p.price_cents FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE order_id=?');
     const ordersWithItems = orders.map(o => ({
       ...o,
@@ -663,7 +699,7 @@ function getOrderWithItems(orderId) {
   if (!order) return null;
 
   const items = db.prepare(`
-    SELECT oi.id, oi.product_id, oi.ready, oi.paid, oi.comment, p.name, p.price_cents
+    SELECT oi.id, oi.product_id, oi.ready, oi.paid, oi.cancelled, oi.comment, p.name, p.price_cents
     FROM order_items oi
     JOIN products p ON p.id=oi.product_id
     WHERE order_id=?
@@ -673,6 +709,7 @@ function getOrderWithItems(orderId) {
     name: i.name,
     ready: !!i.ready,
     paid: !!i.paid,
+    cancelled: !!i.cancelled,
     price: i.price_cents / 100,
     comment: i.comment || null
   }));

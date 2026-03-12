@@ -445,6 +445,11 @@ textarea{resize:vertical;min-height:80px}
 .order-card .actions .left{display:flex;gap:8px}
 .order-card .actions .right{display:flex;gap:8px;justify-content:flex-end}
 .order-action-btn{position:relative}
+/* Storno-Buttons */
+.btn-cancel-order{color:#dc2626}
+.btn-cancel-order:hover{background:#fee2e2;border-color:#dc2626}
+.btn-cancel-item{background:none;border:1px solid #e5e7eb;color:#dc2626;font-size:18px;font-weight:700;width:32px;height:32px;min-height:32px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;line-height:1}
+.btn-cancel-item:hover{background:#fee2e2;border-color:#dc2626}
 .order-action-btn::before{content:'';position:absolute;top:-8.8px;bottom:-8.8px;left:-8.8px;right:-8.8px}
 .admin-tabs{display:flex;gap:8px;margin-bottom:12px}
 .admin-tabs .tab{flex:1}

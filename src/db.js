@@ -131,6 +131,13 @@ INSERT INTO products(id,name,price_cents,color,half,active) VALUES
       db.exec('ALTER TABLE order_items ADD COLUMN comment TEXT');
       console.log('Added comment column to order_items');
     }
+
+    // order_items: 'cancelled' Spalte hinzufügen falls nicht vorhanden
+    const hasCancelledColumn = db.prepare("PRAGMA table_info(order_items)").all().find(col => col.name === 'cancelled');
+    if(!hasCancelledColumn){
+      db.exec('ALTER TABLE order_items ADD COLUMN cancelled INTEGER DEFAULT 0');
+      console.log('Added cancelled column to order_items');
+    }
   }
 
   // products: 'station' Spalte hinzufügen falls nicht vorhanden

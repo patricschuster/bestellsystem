@@ -3,7 +3,7 @@ const $  = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
 const on = (sel,evt,fn)=>{ const el=(typeof sel==='string')?$(sel):sel; if(el) el.addEventListener(evt,fn); };
 
-const state={ role:'waiter', user:null, tables:[], products:[], orders:[], config:{}, version:'2.6', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null };
+const state={ role:'waiter', user:null, tables:[], products:[], orders:[], config:{}, version:'2.7', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null };
 
 async function api(path, opts={}){ const res=await fetch(path,{ headers:{'Content-Type':'application/json'}, ...opts }); if(!res.ok){ let t=await res.text(); try{ const j=JSON.parse(t); t=j.error||j.message||t; }catch{}; throw new Error(t); } return res.json(); }
 
@@ -281,6 +281,14 @@ function handleWebSocketEvent(event, data) {
           location.reload();
         }, 2500);
       }
+      break;
+
+    case 'order:cancelled':
+      state.orders=state.orders.filter(o=>o.id!==data.id);
+      if(!$('#view-cash').classList.contains('hidden')) renderCash();
+      if(!$('#view-tables').classList.contains('hidden')) renderTables();
+      if(!$('#view-theke').classList.contains('hidden')) renderTheke();
+      if(currentCashOrder && currentCashOrder.id===data.id){ currentCashOrder=null; show('#view-cash'); renderCash(); }
       break;
 
     case 'products:updated':
@@ -1041,11 +1049,11 @@ function orderItemsArray(){
 async function sendOrder(){ if(basket.size===0) return alert('Bitte Produkte auswählen'); const items=orderItemsArray(); await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: currentTable, waiter: state.user, items })}); basket.clear(); state.orders=await api('/api/orders'); renderTables(); show('#view-tables'); }
 
 /* Cash */
-function orderTotal(o){ return o.items.filter(it=>!it.paid).reduce((s,it)=>s+it.price,0); }
+function orderTotal(o){ return o.items.filter(it=>!it.paid&&!it.cancelled).reduce((s,it)=>s+it.price,0); }
 function renderCash(){
   const wrap=$('#cash-list');
   wrap.innerHTML='';
-  const mine=state.orders.filter(o=>o.waiter===state.user && o.status!=='paid');
+  const mine=state.orders.filter(o=>o.waiter===state.user && o.status!=='paid' && o.status!=='cancelled');
   if(mine.length===0){
     wrap.innerHTML='<div class="muted">Keine offenen Bestellungen.</div>';
     return;
@@ -1100,7 +1108,26 @@ function renderCash(){
       renderTables();
     });
 
-    btnRow.append(changeBtn, btn);
+    // Stornieren-Button (nur wenn kein Item bezahlt) – gleicher Style wie Rückgeld-Button
+    const canCancel=o.items.every(it=>!it.paid);
+    if(canCancel){
+      const cancelBtn=document.createElement('button');
+      cancelBtn.className='btn-cancel-order ghost';
+      cancelBtn.style.padding='8px';
+      cancelBtn.style.minHeight='40px';
+      cancelBtn.title='Bestellung stornieren';
+      cancelBtn.innerHTML='<span class="material-symbols-outlined">delete</span>';
+      cancelBtn.addEventListener('click',async(e)=>{
+        e.stopPropagation();
+        if(!confirm(`Bestellung Tisch ${tableDisplayNum(o.table_id)} wirklich stornieren?`)) return;
+        await api(`/api/orders/${o.id}`,{method:'DELETE'});
+        state.orders=await api('/api/orders');
+        renderCash(); renderTables();
+      });
+      btnRow.append(cancelBtn, changeBtn, btn);
+    } else {
+      btnRow.append(changeBtn, btn);
+    }
     right.append(price, btnRow);
     row.append(left,right);
     card.appendChild(row);
@@ -1132,7 +1159,7 @@ function renderCashDetail(){
   const itemsList=document.createElement('div');
   itemsList.className='cash-detail-items';
 
-  const unpaidItems=currentCashOrder.items.filter(it=>!it.paid);
+  const unpaidItems=currentCashOrder.items.filter(it=>!it.paid&&!it.cancelled);
 
   const grouped=new Map();
   unpaidItems.forEach(it=>{
@@ -1194,7 +1221,26 @@ function renderCashDetail(){
     left.append(controls,nameEl);
 
     const right=document.createElement('div');
+    right.style.display='flex';
+    right.style.alignItems='center';
+    right.style.gap='8px';
     right.innerHTML=`<strong>${fmtEuro(group.price*selectedCount)}</strong>`;
+
+    // × Stornieren pro Item
+    const cancelItemBtn=document.createElement('button');
+    cancelItemBtn.className='btn-cancel-item';
+    cancelItemBtn.title='1x stornieren';
+    cancelItemBtn.textContent='×';
+    cancelItemBtn.addEventListener('click',async(e)=>{
+      e.stopPropagation();
+      const itemId=group.ids[0]; // ältestes Item dieser Gruppe stornieren
+      await api(`/api/orders/${currentCashOrder.id}/items/${itemId}`,{method:'DELETE'});
+      state.orders=await api('/api/orders');
+      currentCashOrder=state.orders.find(o=>o.id===currentCashOrder.id)||null;
+      if(!currentCashOrder){ show('#view-cash'); renderCash(); } else { renderCashDetail(); }
+      renderTables();
+    });
+    right.appendChild(cancelItemBtn);
 
     itemCard.append(left,right);
     itemsList.appendChild(itemCard);
@@ -1321,7 +1367,7 @@ function renderStationMode(){
   state.orders.filter(o=>o.status!=='picked').forEach(order=>{
     order.items.forEach(item=>{
       const station=productStation(item.product_id);
-      if(station===state.selectedStation && !item.ready){
+      if(station===state.selectedStation && !item.ready && !item.cancelled){
         stationItems.push({
           ...item,
           order_id:order.id,
@@ -1510,11 +1556,9 @@ function renderKitchenMode(){
     (groups[o.waiter]=groups[o.waiter]||[]).push(o);
   });
 
-  // Füge POS hinzu, wenn POS-Bestellungen existieren
+  // Alle Bediener mit offenen Bestellungen einschließen, auch wenn nicht mehr eingeloggt
   const allWaiters=[...activeWaiters];
-  if(groups['POS'] && groups['POS'].length>0 && !allWaiters.includes('POS')){
-    allWaiters.push('POS');
-  }
+  Object.keys(groups).forEach(w=>{ if(!allWaiters.includes(w)) allWaiters.push(w); });
 
   // Sortierung: POS immer ganz rechts, dann bei mehr als 4 Bedienungen -> mit Bestellungen zuerst, sonst alphabetisch
   let waiters;
@@ -1590,7 +1634,7 @@ function renderKitchenMode(){
         card.appendChild(row);
         const items=document.createElement('div');
         items.className='items';
-        o.items.forEach(it=>{
+        o.items.filter(it=>!it.cancelled).forEach(it=>{
           const line=document.createElement('div');
           line.className='item '+(it.ready?'ready':'');
           line.textContent=productName(it.product_id);
@@ -1690,11 +1734,9 @@ function renderBedienerColumn(container){
     (groups[o.waiter]=groups[o.waiter]||[]).push(o);
   });
 
-  // Füge POS hinzu, wenn POS-Bestellungen existieren
+  // Alle Bediener mit offenen Bestellungen einschließen, auch wenn nicht mehr eingeloggt
   const allWaiters=[...activeWaiters];
-  if(groups['POS'] && groups['POS'].length>0 && !allWaiters.includes('POS')){
-    allWaiters.push('POS');
-  }
+  Object.keys(groups).forEach(w=>{ if(!allWaiters.includes(w)) allWaiters.push(w); });
 
   // Sortierung: POS immer ganz rechts, dann bei mehr als 4 Bedienungen -> mit Bestellungen zuerst, sonst alphabetisch
   let waiters;
@@ -1764,7 +1806,7 @@ function renderBedienerColumn(container){
         card.appendChild(row);
         const items=document.createElement('div');
         items.className='items';
-        o.items.forEach(it=>{
+        o.items.filter(it=>!it.cancelled).forEach(it=>{
           const line=document.createElement('div');
           line.className='item '+(it.ready?'ready':'');
           line.textContent=productName(it.product_id);
