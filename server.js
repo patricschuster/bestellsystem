@@ -1,4 +1,4 @@
-// server.js (2.4.1 + WebSocket + Security)
+// server.js (2.9 + WebSocket + Security)
 import express from 'express';
 import http from 'http';
 import https from 'https';
@@ -159,7 +159,7 @@ function writeConfigEntry(key,val){
   db.prepare('INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(val));
 }
 
-app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.4.1', time:new Date().toISOString() }));
+app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.9', time:new Date().toISOString() }));
 
 // Config
 app.get('/api/config', (_req,res)=> res.json(readConfigMap()));
@@ -367,13 +367,14 @@ app.get('/api/system/status', (_req,res)=>{
       broadcastEvents: wsStats.broadcastEvents,
       uptime: Math.floor((Date.now() - wsStats.startTime) / 1000)
     },
+    clients: Array.from(wsClients.values()).map(c => ({ ...c })),
     timestamp: new Date().toISOString()
   });
 });
 
 // Orders
 app.get('/api/orders', (_req,res)=>{
-  let orders=db.prepare("SELECT * FROM orders WHERE status NOT IN ('paid','cancelled') ORDER BY datetime(created_at) DESC").all();
+  let orders=db.prepare("SELECT * FROM orders WHERE status NOT IN ('paid','cancelled') OR (waiter='POS' AND status='paid') ORDER BY datetime(created_at) DESC").all();
   const itemsStmt=db.prepare('SELECT oi.id, oi.product_id, oi.ready, oi.paid, oi.cancelled, oi.comment, p.name, p.price_cents FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE order_id=?');
   res.json(orders.map(o=>({ ...o, items: itemsStmt.all(o.id).map(i=>({ id:i.id, product_id:i.product_id, name:i.name, ready:!!i.ready, paid:!!i.paid, cancelled:!!i.cancelled, price:i.price_cents/100, comment:i.comment||null })) })));
 });
@@ -595,8 +596,8 @@ const httpServer = http.createServer(app);
 // WebSocket Server
 const wss = new WebSocketServer({ noServer: true });
 
-// Store all connected clients
-const wsClients = new Set();
+// Store all connected clients + metadata (ws -> { ip, connectedAt, viewport, userAgent, role, user, orientation, dpr, standalone })
+const wsClients = new Map();
 
 // WebSocket statistics
 const wsStats = {
@@ -613,13 +614,23 @@ wss.on('connection', (ws, req) => {
   const clientIp = req.socket.remoteAddress;
   log('info', 'websocket', `Client connected`, { ip: clientIp });
 
-  wsClients.add(ws);
+  wsClients.set(ws, {
+    ip: clientIp,
+    connectedAt: new Date().toISOString(),
+    viewport: null,
+    userAgent: null,
+    role: null,
+    user: null,
+    orientation: null,
+    dpr: null,
+    standalone: null
+  });
   wsStats.totalConnections++;
   console.log(`[WebSocket] Client connected. Total clients: ${wsClients.size}`);
 
   // Send initial data to newly connected client
   try {
-    const orders = db.prepare("SELECT * FROM orders WHERE status NOT IN ('paid','cancelled') ORDER BY datetime(created_at) DESC").all();
+    const orders = db.prepare("SELECT * FROM orders WHERE status NOT IN ('paid','cancelled') OR (waiter='POS' AND status='paid') ORDER BY datetime(created_at) DESC").all();
     const itemsStmt = db.prepare('SELECT oi.id, oi.product_id, oi.ready, oi.paid, oi.comment, p.name, p.price_cents FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE order_id=?');
     const ordersWithItems = orders.map(o => ({
       ...o,
@@ -661,6 +672,19 @@ wss.on('connection', (ws, req) => {
       if (data.event === 'ping') {
         ws.send(JSON.stringify({ event: 'pong', timestamp: new Date().toISOString() }));
         wsStats.messagesSent++;
+      } else if (data.event === 'client:info') {
+        const meta = wsClients.get(ws);
+        if (meta && data.data) {
+          Object.assign(meta, {
+            viewport: data.data.viewport || meta.viewport,
+            userAgent: data.data.userAgent || meta.userAgent,
+            role: data.data.role ?? meta.role,
+            user: data.data.user ?? meta.user,
+            orientation: data.data.orientation || meta.orientation,
+            dpr: data.data.dpr ?? meta.dpr,
+            standalone: data.data.standalone ?? meta.standalone
+          });
+        }
       }
     } catch (err) {
       console.error('[WebSocket] Error parsing message:', err);
@@ -700,7 +724,7 @@ function broadcast(event, data) {
   });
 
   let sentCount = 0;
-  wsClients.forEach(client => {
+  wsClients.forEach((_meta, client) => {
     if (client.readyState === 1) { // 1 = OPEN
       try {
         client.send(message);
@@ -748,9 +772,9 @@ function getOrderWithItems(orderId) {
 // =============================================================================
 
 httpServer.listen(PORT, () => {
-  console.log(`Bestellsystem v2.4.1 on http://localhost:${PORT}`);
+  console.log(`Bestellsystem v2.9 on http://localhost:${PORT}`);
   console.log(`WebSocket server ready`);
-  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.4.1' });
+  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.9' });
 });
 
 // HTTPS Server (mit selbstsigniertem Zertifikat)

@@ -1,9 +1,9 @@
-// app.js (v2.4.1 + POS)
+// app.js (v2.9 + POS)
 const $  = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
 const on = (sel,evt,fn)=>{ const el=(typeof sel==='string')?$(sel):sel; if(el) el.addEventListener(evt,fn); };
 
-const state={ role:'waiter', user:null, tables:[], products:[], orders:[], config:{}, version:'2.8', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
+const state={ role:'waiter', user:null, tables:[], products:[], orders:[], config:{}, version:'2.9', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
 
 async function api(path, opts={}){ const res=await fetch(path,{ headers:{'Content-Type':'application/json'}, ...opts }); if(!res.ok){ let t=await res.text(); try{ const j=JSON.parse(t); t=j.error||j.message||t; }catch{}; throw new Error(t); } return res.json(); }
 
@@ -48,9 +48,10 @@ function connectWebSocket() {
       // HTTP Health-Check nicht mehr nötig, WS übernimmt
       stopLoginHealthCheck();
 
-      // Send initial ping
+      // Send initial ping + client-info (viewport, role, UA)
       if (state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ event: 'ping', timestamp: new Date().toISOString() }));
+        sendClientInfo();
       }
 
       // Start heartbeat (ping every 30 seconds)
@@ -119,6 +120,24 @@ function connectWebSocket() {
 
   } catch (err) {
     console.error('[WebSocket] Failed to create connection:', err);
+  }
+}
+
+function sendClientInfo() {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  try {
+    const info = {
+      viewport: { w: window.innerWidth, h: window.innerHeight },
+      orientation: (window.innerWidth >= window.innerHeight) ? 'landscape' : 'portrait',
+      dpr: window.devicePixelRatio || 1,
+      standalone: window.matchMedia('(display-mode: standalone)').matches || !!window.navigator.standalone,
+      userAgent: navigator.userAgent,
+      role: state.role || null,
+      user: state.user || null
+    };
+    state.ws.send(JSON.stringify({ event: 'client:info', data: info, timestamp: new Date().toISOString() }));
+  } catch (err) {
+    console.warn('[WebSocket] sendClientInfo failed:', err);
   }
 }
 
@@ -249,9 +268,16 @@ function handleWebSocketEvent(event, data) {
       break;
 
     case 'order:paid':
-      // Order was paid, remove from list
+      // Order was paid
       console.log('[WebSocket] Order paid:', data.id);
-      state.orders = state.orders.filter(o => o.id !== data.id);
+      const paidOrder = state.orders.find(o => o.id === data.id);
+      if (paidOrder && paidOrder.waiter === 'POS') {
+        // POS-Order an der Theke bis "Abgeholt" sichtbar halten
+        paidOrder.status = 'paid';
+        paidOrder.items.forEach(it => { it.paid = true; });
+      } else {
+        state.orders = state.orders.filter(o => o.id !== data.id);
+      }
       renderActiveView();
       break;
 
@@ -2078,6 +2104,9 @@ function renderPOSColumn(container){
   checkoutArea.appendChild(actions);
 
   container.appendChild(checkoutArea);
+
+  // Nach Layout: Grid dynamisch vermessen (zweimal, damit Grid-Row-Sizing 1fr stabil ist)
+  requestAnimationFrame(()=>{ layoutPOSGrid(); requestAnimationFrame(layoutPOSGrid); });
 }
 
 function addPOSQty(pid,delta){
@@ -2085,6 +2114,63 @@ function addPOSQty(pid,delta){
   if(q===0) state.posBasket.delete(pid);
   else state.posBasket.set(pid,q);
   renderTheke();
+}
+
+/* Dynamisches POS-Produkt-Grid: Füllt verfügbare Fläche perfekt aus.
+   Wählt cols/rows automatisch so, dass Kacheln möglichst groß und nahe Quadrat sind. */
+function layoutPOSGrid(){
+  const area=document.querySelector('.pos-products-area');
+  if(!area) return;
+  const grid=area.querySelector('.grid.products');
+  if(!grid) return;
+  const tiles=grid.querySelectorAll('.product-btn');
+  const n=tiles.length;
+  if(n===0) return;
+
+  const cs=getComputedStyle(area);
+  const padL=parseFloat(cs.paddingLeft)||0;
+  const padR=parseFloat(cs.paddingRight)||0;
+  const padT=parseFloat(cs.paddingTop)||0;
+  const padB=parseFloat(cs.paddingBottom)||0;
+  const W=area.clientWidth-padL-padR;
+  const H=area.clientHeight-padT-padB;
+  if(W<=0||H<=0) return;
+
+  const gap=8;
+  const minTile=60;
+
+  // Alle möglichen Spaltenanzahlen ausprobieren, Score = Fläche mit Aspekt-Ratio-Bias
+  let best=null;
+  for(let cols=1;cols<=n;cols++){
+    const rows=Math.ceil(n/cols);
+    const cw=(W-(cols-1)*gap)/cols;
+    const ch=(H-(rows-1)*gap)/rows;
+    if(cw<minTile||ch<minTile) continue;
+    const ar=cw/ch;
+    const arPenalty=Math.pow(Math.log(ar),2); // 0 bei ar=1
+    const score=(cw*ch)-arPenalty*1500;
+    if(!best||score>best.score) best={cols,rows,cw,ch,score};
+  }
+
+  // Fallback: wenn minTile unterschritten, einfach quadratisch-annähernd
+  if(!best){
+    const cols=Math.max(1,Math.ceil(Math.sqrt(n*W/Math.max(H,1))));
+    const rows=Math.ceil(n/cols);
+    const cw=Math.max(40,(W-(cols-1)*gap)/cols);
+    const ch=Math.max(40,(H-(rows-1)*gap)/rows);
+    best={cols,rows,cw,ch};
+  }
+
+  grid.style.gridTemplateColumns=`repeat(${best.cols}, 1fr)`;
+  grid.style.gridAutoRows=`${best.ch}px`;
+  grid.style.gap=`${gap}px`;
+
+  tiles.forEach(el=>{
+    el.style.aspectRatio='auto';
+    el.style.maxHeight='none';
+    el.style.minHeight='0';
+    el.style.height=`${best.ch}px`;
+  });
 }
 
 /* POS History */
@@ -2349,6 +2435,9 @@ async function adminSystemLoad(){
     statusDiv.appendChild(item);
   });
 
+  // Render connected clients
+  renderSystemClients(status.clients||[]);
+
   // Fetch and render logs
   const logs=await api('/api/system/logs');
   const logsDiv=$('#system-logs');
@@ -2399,6 +2488,53 @@ async function adminSystemLoad(){
     item.innerHTML=content;
     logsDiv.appendChild(item);
   });
+}
+
+function shortUA(ua){
+  if(!ua) return '—';
+  if(/iPad/i.test(ua)) return 'iPad / Safari';
+  if(/iPhone/i.test(ua)) return 'iPhone / Safari';
+  if(/Android/i.test(ua)) return 'Android';
+  if(/Edg\//.test(ua)) return 'Edge';
+  if(/Chrome\//.test(ua)) return 'Chrome';
+  if(/Firefox\//.test(ua)) return 'Firefox';
+  if(/Safari\//.test(ua)) return 'Safari';
+  return ua.slice(0,40);
+}
+
+function renderSystemClients(clients){
+  const wrap=$('#system-clients');
+  if(!wrap) return;
+  wrap.innerHTML='';
+  if(!clients.length){
+    wrap.innerHTML='<div class="muted">Keine Clients verbunden</div>';
+    return;
+  }
+  const table=document.createElement('table');
+  table.className='prod-table';
+  table.innerHTML='<thead><tr><th>Rolle/User</th><th>Viewport</th><th>Orient.</th><th>DPR</th><th>PWA</th><th>Device</th><th>IP</th><th>seit</th></tr></thead>';
+  const tb=document.createElement('tbody');
+  clients.forEach(c=>{
+    const tr=document.createElement('tr');
+    const roleUser=c.role?`${c.role}${c.user?` · ${c.user}`:''}`:'—';
+    const vp=c.viewport?`${c.viewport.w}×${c.viewport.h}`:'—';
+    const orient=c.orientation||'—';
+    const dpr=c.dpr?c.dpr+'x':'—';
+    const pwa=c.standalone===true?'✓':(c.standalone===false?'—':'?');
+    const dev=shortUA(c.userAgent);
+    const ip=(c.ip||'').replace('::ffff:','');
+    let seit='—';
+    if(c.connectedAt){
+      const diffSec=Math.floor((Date.now()-new Date(c.connectedAt).getTime())/1000);
+      if(diffSec<60) seit=diffSec+'s';
+      else if(diffSec<3600) seit=Math.floor(diffSec/60)+'m';
+      else seit=Math.floor(diffSec/3600)+'h '+Math.floor((diffSec%3600)/60)+'m';
+    }
+    tr.innerHTML=`<td><strong>${roleUser}</strong></td><td>${vp}</td><td>${orient}</td><td>${dpr}</td><td style="text-align:center;">${pwa}</td><td>${dev}</td><td><span class="muted">${ip}</span></td><td>${seit}</td>`;
+    tb.appendChild(tr);
+  });
+  table.appendChild(tb);
+  wrap.appendChild(table);
 }
 
 // Polling Fallback: Only polls if WebSocket is not connected
@@ -2470,6 +2606,19 @@ window.addEventListener('online', () => {
     console.log('[WebSocket] Network online – reconnecting immediately');
     connectWebSocket();
   }
+});
+
+// Viewport/Orientation-Änderungen an Server melden (debounced) + POS-Grid neu layouten
+let _clientInfoResizeTimer = null;
+let _posLayoutResizeTimer = null;
+window.addEventListener('resize', () => {
+  if (_posLayoutResizeTimer) clearTimeout(_posLayoutResizeTimer);
+  _posLayoutResizeTimer = setTimeout(layoutPOSGrid, 80);
+  if (_clientInfoResizeTimer) clearTimeout(_clientInfoResizeTimer);
+  _clientInfoResizeTimer = setTimeout(sendClientInfo, 500);
+});
+window.addEventListener('orientationchange', () => {
+  setTimeout(() => { layoutPOSGrid(); sendClientInfo(); }, 250);
 });
 
 // =============================================================================

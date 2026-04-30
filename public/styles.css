@@ -194,117 +194,20 @@ textarea{resize:vertical;min-height:80px}
   -webkit-overflow-scrolling: touch;
 }
 
-/* Grid: Feste Spalten, adaptive Höhe */
+/* Grid: Spalten/Zeilen werden dynamisch von layoutPOSGrid() in app.js gesetzt */
 .pos-products-area .grid.products {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
   align-content: start;
-  /* Basis: 3 Spalten für kleine Displays */
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr); /* Fallback */
 }
 
-/* Basis-Styling für Kacheln */
+/* Basis-Styling für Kacheln (Höhe wird inline von layoutPOSGrid() gesetzt) */
 .pos-products-area .product-btn {
   width: 100%;
-  aspect-ratio: 1 / 1;
-  max-height: 180px;
-  min-height: 85px;
-  padding: 8px 6px;
-  box-sizing: border-box;
-  overflow: hidden;
-}
-
-/* ==== SMARTPHONES (<600px) ==== */
-@media (max-width: 599px) {
-  .pos-products-area .grid.products {
-    grid-template-columns: repeat(3, 1fr);
-    gap: 8px;
-  }
-  .pos-products-area .product-btn {
-    aspect-ratio: 1 / 1;
-    max-height: min(140px, calc((100vh - 180px) / 4));
-    min-height: 85px;
-  }
-}
-
-/* ==== TABLETS PORTRAIT (600px - 1023px) ==== */
-@media (min-width: 600px) and (max-width: 1023px) and (orientation: portrait) {
-  .pos-products-area .grid.products {
-    grid-template-columns: repeat(4, 1fr); /* Feste 4 Spalten */
-    gap: 10px;
-  }
-  .pos-products-area .product-btn {
-    aspect-ratio: 1 / 1;
-    /* Bei 20 Produkten = 5 Zeilen: (vh-250px)/5.5 */
-    max-height: min(160px, calc((100vh - 250px) / 5.5));
-    min-height: 95px;
-  }
-}
-
-/* ==== TABLETS LANDSCAPE (600px - 1199px) ==== */
-@media (min-width: 600px) and (max-width: 1199px) and (orientation: landscape) {
-  .pos-products-area .grid.products {
-    grid-template-columns: repeat(6, 1fr); /* Feste 6 Spalten */
-    gap: 8px;
-  }
-  .pos-products-area .product-btn {
-    aspect-ratio: 4 / 3;
-    /* Bei 20 Produkten = 4 Zeilen: (vh-180px)/4.5 */
-    max-height: min(120px, calc((100vh - 180px) / 4.5));
-    min-height: 70px;
-  }
-}
-
-/* ==== DESKTOP LANDSCAPE (≥1200px) ==== */
-@media (min-width: 1200px) and (orientation: landscape) {
-  .pos-products-area .grid.products {
-    grid-template-columns: repeat(7, 1fr); /* Feste 7 Spalten */
-    gap: 10px;
-  }
-  .pos-products-area .product-btn {
-    aspect-ratio: 4 / 3;
-    max-height: min(140px, calc((100vh - 200px) / 4));
-    min-height: 80px;
-  }
-}
-
-/* ==== DESKTOP PORTRAIT (≥1024px) ==== */
-@media (min-width: 1024px) and (orientation: portrait) {
-  .pos-products-area .grid.products {
-    grid-template-columns: repeat(5, 1fr); /* Feste 5 Spalten */
-    gap: 12px;
-  }
-  .pos-products-area .product-btn {
-    aspect-ratio: 1 / 1;
-    max-height: min(180px, calc((100vh - 250px) / 5));
-    min-height: 100px;
-  }
-}
-
-/* ==== SPLIT-LAYOUT: 50/50 (mit Warenkorb) ==== */
-.hybrid-layout.split-50-50 .pos-products-area .grid.products {
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-}
-.hybrid-layout.split-50-50 .pos-products-area .product-btn {
-  max-height: min(130px, calc((100vh - 180px) / 4.5));
-  min-height: 75px;
-}
-
-/* ==== SPLIT-LAYOUT: 30/70 (mit Warenkorb) ==== */
-.hybrid-layout.split-30-70 .pos-products-area .grid.products {
-  grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
-}
-.hybrid-layout.split-30-70 .pos-products-area .product-btn {
-  max-height: min(150px, calc((100vh - 200px) / 5));
-  min-height: 85px;
-}
-
-/* ==== BASIS-STYLING FÜR ALLE KACHELN ==== */
-.pos-products-area .product-btn {
-  /* Stelle sicher, dass Kacheln niemals überlappen */
+  aspect-ratio: auto;
+  padding: 6px 4px;
   box-sizing: border-box;
   overflow: hidden;
   display: flex;
@@ -346,13 +249,13 @@ textarea{resize:vertical;min-height:80px}
 .pos-checkout-area{
   display:flex;
   flex-direction:column;
-  gap:8px;
+  gap:6px;
   overflow:hidden;
   background:#fff;
   border:1px solid #eee;
   border-radius:12px;
-  padding:12px 12px 28px 12px;
-  min-height:140px;
+  padding:10px 12px 12px 12px;
+  min-height:130px;
   max-height:40vh;
 }
 .pos-checkout-area h3{
