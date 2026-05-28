@@ -1,4 +1,4 @@
-// server.js (2.9.1 + WebSocket + Security)
+// server.js (2.9.2 + WebSocket + Security)
 import express from 'express';
 import http from 'http';
 import https from 'https';
@@ -38,17 +38,15 @@ const loginLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// General API rate limit
+// General API rate limit - betrifft nur Mutationen (POST/PUT/PATCH/DELETE).
+// GETs werden komplett geskippt (Polling, Admin-Status, History).
 const apiLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
-  max: 100, // 100 requests per minute
+  max: 500, // 500 mutations per minute
   message: { error: 'Zu viele Anfragen. Bitte versuchen Sie es später erneut.' },
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => {
-    // Skip rate limiting for GET requests to non-sensitive endpoints
-    return req.method === 'GET' && !req.path.includes('/api/system');
-  }
+  skip: (req) => req.method === 'GET'
 });
 
 // Apply rate limiters
@@ -159,7 +157,7 @@ function writeConfigEntry(key,val){
   db.prepare('INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(val));
 }
 
-app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.9.1', time:new Date().toISOString() }));
+app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.9.2', time:new Date().toISOString() }));
 
 // Config
 app.get('/api/config', (_req,res)=> res.json(readConfigMap()));
@@ -291,10 +289,63 @@ app.delete('/api/products/:id', (req,res)=>{
   return ok(res);
 });
 
+// Bulk-Update mehrerer Produkte in einer Transaktion
+app.put('/api/products/bulk', (req,res)=>{
+  const updates=Array.isArray(req.body?.updates)?req.body.updates:null;
+  if(!updates) return res.status(400).json({error:'updates[] required'});
+  if(updates.length>500) return res.status(400).json({error:'max 500 updates per request'});
+  const tx=db.transaction(()=>{
+    const get=db.prepare('SELECT * FROM products WHERE id=?');
+    const upd=db.prepare('UPDATE products SET name=?, price_cents=?, active=?, color=?, half=?, station=? WHERE id=?');
+    for(const u of updates){
+      const id=+u.id;
+      if(!Number.isInteger(id)) continue;
+      const cur=get.get(id);
+      if(!cur) continue;
+      upd.run(
+        u.name??cur.name,
+        u.price!==undefined?Math.round(u.price*100):cur.price_cents,
+        u.active!==undefined?(u.active?1:0):cur.active,
+        u.color!==undefined?u.color:cur.color,
+        u.half!==undefined?(u.half?1:0):cur.half,
+        u.station!==undefined?u.station:cur.station,
+        id
+      );
+    }
+  });
+  try{ tx(); }catch(e){ log('error','products','bulk update failed',{error:e.message}); return res.status(500).json({error:e.message}); }
+  broadcast('products:updated', getProductsList());
+  log('info','products',`bulk update ${updates.length} products`);
+  return ok(res);
+});
+
 // Tables
 app.get('/api/tables', (_req,res)=> res.json(db.prepare('SELECT id,name FROM tables ORDER BY id').all()));
 app.post('/api/tables', (req,res)=>{ const info=db.prepare('INSERT INTO tables(name) VALUES(?)').run(req.body?.name||null); broadcast('tables:updated', db.prepare('SELECT id,name FROM tables ORDER BY id').all()); res.status(201).json(db.prepare('SELECT id,name FROM tables WHERE id=?').get(info.lastInsertRowid)); });
 app.delete('/api/tables/:id', (req,res)=>{ db.prepare('DELETE FROM tables WHERE id=?').run(+req.params.id); broadcast('tables:updated', db.prepare('SELECT id,name FROM tables ORDER BY id').all()); return ok(res); });
+
+// Bulk: setzt die Anzahl der normalen Tische (POS-Tisch bleibt unberührt) in einer Transaktion
+app.put('/api/tables/count', (req,res)=>{
+  const raw=parseInt(req.body?.count,10);
+  if(!Number.isInteger(raw)||raw<0||raw>500) return res.status(400).json({error:'count must be 0..500'});
+  const tx=db.transaction(()=>{
+    const existing=db.prepare("SELECT id FROM tables WHERE name IS NULL OR name=''").all().map(r=>r.id);
+    const diff=raw-existing.length;
+    if(diff>0){
+      const ins=db.prepare("INSERT INTO tables(name) VALUES(NULL)");
+      for(let i=0;i<diff;i++) ins.run();
+    } else if(diff<0){
+      const toDelete=existing.sort((a,b)=>b-a).slice(0,-diff);
+      const del=db.prepare("DELETE FROM tables WHERE id=?");
+      for(const id of toDelete) del.run(id);
+    }
+  });
+  try{ tx(); }catch(e){ log('error','tables','bulk count failed',{error:e.message}); return res.status(500).json({error:e.message}); }
+  const list=db.prepare('SELECT id,name FROM tables ORDER BY id').all();
+  broadcast('tables:updated', list);
+  log('info','tables',`bulk count set to ${raw}`,{total:list.length});
+  return res.json({ok:true, total:list.length});
+});
 
 // Waiter Sessions
 app.get('/api/sessions', (_req,res)=>{
@@ -579,12 +630,14 @@ app.post('/api/orders/:id/items',(req,res)=>{
   return ok(res);
 });
 
-// Bediener-History: letzte N Bestellungen eines Bedieners (alle Status, inkl. paid/cancelled)
+// Order-History: letzte N Bestellungen (alle Status, inkl. paid/cancelled).
+// Ohne ?waiter=  → alle Bediener (POS-History an der Theke). Mit ?waiter=Name → nur dieser Bediener.
 app.get('/api/orders/history', (req,res)=>{
   const waiter=(req.query.waiter||'').toString().trim();
-  if(!waiter) return res.status(400).json({error:'waiter required'});
   const limit=Math.max(1,Math.min(200,parseInt(req.query.limit||'50',10)));
-  const orders=db.prepare('SELECT * FROM orders WHERE waiter=? ORDER BY datetime(created_at) DESC LIMIT ?').all(waiter,limit);
+  const orders = waiter
+    ? db.prepare('SELECT * FROM orders WHERE waiter=? ORDER BY datetime(created_at) DESC LIMIT ?').all(waiter,limit)
+    : db.prepare('SELECT * FROM orders ORDER BY datetime(created_at) DESC LIMIT ?').all(limit);
   const itemsStmt=db.prepare('SELECT oi.id, oi.product_id, oi.ready, oi.paid, oi.cancelled, oi.comment, p.name, p.price_cents FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE order_id=?');
   res.json(orders.map(o=>({ ...o, items: itemsStmt.all(o.id).map(i=>({ id:i.id, product_id:i.product_id, name:i.name, ready:!!i.ready, paid:!!i.paid, cancelled:!!i.cancelled, price:i.price_cents/100, comment:i.comment||null })) })));
 });
@@ -782,9 +835,9 @@ function getOrderWithItems(orderId) {
 // =============================================================================
 
 httpServer.listen(PORT, () => {
-  console.log(`Bestellsystem v2.9.1 on http://localhost:${PORT}`);
+  console.log(`Bestellsystem v2.9.2 on http://localhost:${PORT}`);
   console.log(`WebSocket server ready`);
-  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.9.1' });
+  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.9.2' });
 });
 
 // HTTPS Server (mit selbstsigniertem Zertifikat)

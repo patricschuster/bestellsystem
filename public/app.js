@@ -1,9 +1,9 @@
-// app.js (v2.9.1 + POS)
+// app.js (v2.9.2 + POS)
 const $  = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
 const on = (sel,evt,fn)=>{ const el=(typeof sel==='string')?$(sel):sel; if(el) el.addEventListener(evt,fn); };
 
-const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], config:{}, version:'2.9.1', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
+const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.9.2', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
 
 async function api(path, opts={}){ const res=await fetch(path,{ headers:{'Content-Type':'application/json'}, ...opts }); if(!res.ok){ let t=await res.text(); try{ const j=JSON.parse(t); t=j.error||j.message||t; }catch{}; throw new Error(t); } return res.json(); }
 
@@ -250,6 +250,7 @@ function handleWebSocketEvent(event, data) {
       // Play notification sound (optional)
       playNotificationSound();
       maybeRefreshReport();
+      maybeRefreshHistories();
       break;
 
     case 'order:updated':
@@ -265,6 +266,7 @@ function handleWebSocketEvent(event, data) {
         renderActiveView();
       }
       maybeRefreshReport();
+      maybeRefreshHistories();
       break;
 
     case 'order:paid':
@@ -279,6 +281,8 @@ function handleWebSocketEvent(event, data) {
         state.orders = state.orders.filter(o => o.id !== data.id);
       }
       renderActiveView();
+      maybeRefreshReport();
+      maybeRefreshHistories();
       break;
 
     case 'session:update':
@@ -318,6 +322,7 @@ function handleWebSocketEvent(event, data) {
       if(!$('#view-theke').classList.contains('hidden')) renderTheke();
       if(currentCashOrder && currentCashOrder.id===data.id){ currentCashOrder=null; show('#view-cash'); renderCash(); }
       maybeRefreshReport();
+      maybeRefreshHistories();
       break;
 
     case 'products:updated':
@@ -371,6 +376,12 @@ function renderActiveView() {
 }
 function maybeRefreshReport(){
   if(!$('#admin-report').classList.contains('hidden')) adminReportLoad();
+}
+
+// Reloadet die aktuell sichtbare(n) History-Views (Server-backed, nicht aus state.orders)
+function maybeRefreshHistories(){
+  if(!$('#view-pos-history').classList.contains('hidden')) loadPOSHistory();
+  if(!$('#view-orders-history').classList.contains('hidden')) loadWaiterHistory();
 }
 
 // Helper: Play notification sound (optional)
@@ -734,7 +745,7 @@ on('#btn-back-header','click', ()=>{
 on('#btn-send-header','click', ()=>sendOrder());
 on('#btn-pos-toggle','click', ()=>{ state.posMode=!state.posMode; $('#btn-pos-toggle').textContent=state.posMode?'POS: AN':'POS: AUS'; $('#btn-pos-toggle').classList.toggle('active', state.posMode); renderTheke(); updateHeader('#view-theke'); });
 on('#btn-sound-toggle','click', ()=>{ state.soundEnabled=!state.soundEnabled; localStorage.setItem('soundEnabled',state.soundEnabled?'on':'off'); updateHeader('#view-theke'); });
-on('#btn-pos-history','click', ()=>{ renderPOSHistory(); show('#view-pos-history'); });
+on('#btn-pos-history','click', ()=>openPOSHistory());
 on('#btn-orders-history','click', ()=>openWaiterHistory());
 // Stern-Button: Tap = Filter toggle · Long-Press (500ms) = Verwalten-Modal
 let _favBtnLongPressTimer=null;
@@ -2217,25 +2228,32 @@ function layoutPOSGrid(){
   });
 }
 
-/* POS History */
-function renderPOSHistory(){
-  const wrap=$('#pos-history-list');
-  wrap.innerHTML='';
-
-  // History: Zeige Bestellungen die abgeholt ODER vollständig bezahlt sind
-  const posOrders=state.orders.filter(o=>{
-    if(o.status==='picked') return true; // Abgeholt immer anzeigen
-    if(o.status==='paid') return true; // Ganze Bestellung als bezahlt markiert
-    const allPaid=o.items.every(it=>it.paid);
-    return allPaid; // Oder alle Items bezahlt
-  }).sort((a,b)=>b.created_at.localeCompare(a.created_at)).slice(0,50);
-
-  if(posOrders.length===0){
-    wrap.innerHTML='<div class="muted">Keine abgeschlossenen Bestellungen vorhanden.</div>';
+/* POS History (Theke): zeigt ALLE Bestellungen (alle Bediener + POS, alle Status) - geladen vom Server */
+async function loadPOSHistory(){
+  try {
+    state.posHistory = await api('/api/orders/history?limit=50');
+  } catch(e) {
+    console.error('Failed to load POS history:', e);
     return;
   }
+  if(!$('#view-pos-history').classList.contains('hidden')) renderPOSHistory();
+}
 
-  posOrders.forEach(o=>{
+async function openPOSHistory(){
+  await loadPOSHistory();
+  show('#view-pos-history');
+}
+
+function renderPOSHistory(){
+  const wrap=$('#pos-history-list');
+  if(!wrap) return;
+  wrap.innerHTML='';
+  const orders=state.posHistory||[];
+  if(orders.length===0){
+    wrap.innerHTML='<div class="muted">Keine Bestellungen vorhanden.</div>';
+    return;
+  }
+  orders.forEach(o=>{
     const card=document.createElement('div');
     card.className='cash-card';
 
@@ -2250,18 +2268,20 @@ function renderPOSHistory(){
     left.innerHTML=`<strong>${o.waiter} #${o.id}</strong> · <span class="muted">${tableLabel} · ${dateStr} ${timeStr}</span>`;
 
     const middle=document.createElement('div');
-
-    // Nur Bezahlt-Status anzeigen
-    const allPaid=o.status==='paid' || o.items.every(it=>it.paid);
-    if(allPaid){
-      const paidBadge=document.createElement('span');
-      paidBadge.className='status-badge status-paid';
-      paidBadge.textContent='bezahlt';
-      middle.appendChild(paidBadge);
-    }
+    const badge=document.createElement('span');
+    let label='offen', cls='status-open';
+    const allItemsPaid=o.items.length>0 && o.items.every(it=>it.paid||it.cancelled);
+    if(o.status==='cancelled'){ label='storniert'; cls='status-cancelled'; }
+    else if(o.status==='paid'||allItemsPaid){ label='bezahlt'; cls='status-paid'; }
+    else if(o.status==='picked'){ label='abgeholt'; cls='status-picked'; }
+    else if(o.status==='ready'){ label='bereit'; cls='status-ready'; }
+    badge.className=`status-badge ${cls}`;
+    badge.textContent=label;
+    middle.appendChild(badge);
 
     const right=document.createElement('div');
-    right.innerHTML=`<strong>${fmtEuro(orderTotal(o))}</strong>`;
+    const total=o.items.filter(it=>!it.cancelled).reduce((s,it)=>s+it.price,0);
+    right.innerHTML=`<strong>${fmtEuro(total)}</strong>`;
 
     row.append(left,middle,right);
     card.appendChild(row);
@@ -2269,34 +2289,37 @@ function renderPOSHistory(){
     const items=document.createElement('div');
     items.className='items';
     items.style.marginTop='8px';
-
     const grouped=new Map();
-    o.items.forEach(it=>{
+    o.items.filter(it=>!it.cancelled).forEach(it=>{
       const name=productName(it.product_id);
       grouped.set(name,(grouped.get(name)||0)+1);
     });
-
     grouped.forEach((qty,name)=>{
       const line=document.createElement('div');
       line.className='item';
       line.textContent=`${qty}x ${name}`;
       items.appendChild(line);
     });
-
     card.appendChild(items);
+
     wrap.appendChild(card);
   });
 }
 
 /* Waiter History – die letzten 50 eigenen Bestellungen */
-async function openWaiterHistory(){
+async function loadWaiterHistory(){
   if(!state.user) return;
   try{
     state.waiterHistory=await api(`/api/orders/history?waiter=${encodeURIComponent(state.user)}&limit=50`);
   }catch(e){
-    alert('Fehler beim Laden: '+e.message);
+    console.error('Failed to load waiter history:',e);
     return;
   }
+  if(!$('#view-orders-history').classList.contains('hidden')) renderWaiterHistory();
+}
+
+async function openWaiterHistory(){
+  await loadWaiterHistory();
   show('#view-orders-history');
 }
 
@@ -2366,14 +2389,45 @@ async function adminInit(){ $$('.admin-tabs .tab').forEach(btn=>on(btn,'click',(
 async function adminTablesLoad(){ state.config=await api('/api/config'); $('#cfg-cols').value=state.config.grid_cols??4; $('#cfg-theke-layout').value=(state.config.theke_layout??'badges'); const tables=await api('/api/tables'); $('#tbl-count').textContent=tables.length; $('#tbl-target').value=tables.length; const prev=$('#admin-tables-preview'); prev.innerHTML=''; prev.style.setProperty('--cols', Math.max(3, Math.min(6, +($('#cfg-cols').value||4)))); tables.forEach((t,i)=>{ const b=document.createElement('button'); b.className='table-btn'; b.textContent=i+1; prev.appendChild(b); }); }
 async function adminSaveCols(){ const n=Math.max(3,Math.min(6,+($('#cfg-cols').value||4))); await api('/api/config',{method:'PUT', body:JSON.stringify({grid_cols:n})}); state.config.grid_cols=n; await adminTablesLoad(); }
 async function adminSaveThekeLayout(){ const v=$('#cfg-theke-layout').value||'badges'; await api('/api/config',{method:'PUT', body:JSON.stringify({theke_layout:v})}); state.config.theke_layout=v; await adminTablesLoad(); }
-async function adminApplyTables(){ const target=Math.max(1,Math.min(200, +($('#tbl-target').value||16))); const tables=await api('/api/tables'); const diff=target-tables.length; if(diff===0) return; if(diff>0){ for(let i=0;i<diff;i++) await api('/api/tables',{method:'POST', body:JSON.stringify({name:null})}); } else { const ids=tables.map(t=>t.id).sort((a,b)=>b-a).slice(0,-diff); for(const id of ids) await api(`/api/tables/${id}`,{method:'DELETE'}); } await adminTablesLoad(); }
+async function adminApplyTables(){
+  const target=Math.max(0,Math.min(500, +($('#tbl-target').value||16)));
+  try{
+    await api('/api/tables/count',{method:'PUT', body:JSON.stringify({count:target})});
+  }catch(e){
+    return alert('Fehler beim Anpassen der Tische: '+e.message);
+  }
+  await adminTablesLoad();
+}
 function priceToNumber(s){ if(typeof s==='number') return s; s=(s||'').toString().trim().replace('.','').replace(',','.'); return parseFloat(s)||0; }
 async function adminProductsLoad(){ const list=await api('/api/products'); state.products=list; const stations=(state.config.stations||[]); const tbl=$('#prod-table'); tbl.innerHTML=''; const thead=document.createElement('thead'); thead.innerHTML='<tr><th style="width:78px;">Reihenfolge</th><th>ID</th><th>Name</th><th>Preis</th><th>Farbe</th><th>Station</th><th>Aktiv</th><th>1/2</th><th></th></tr>'; tbl.appendChild(thead); const tb=document.createElement('tbody'); list.forEach((p,idx)=>{ const tr=document.createElement('tr'); tr.dataset.id=p.id; const color=p.color||'#ffffff'; const stationOptions=`<option value="">Keine</option>${stations.map(s=>`<option value="${s}" ${p.station===s?'selected':''}>${s}</option>`).join('')}`; tr.innerHTML=`<td><button class="btn-up" data-id="${p.id}" ${idx===0?'disabled':''}>▲</button> <button class="btn-down" data-id="${p.id}" ${idx===list.length-1?'disabled':''}>▼</button></td><td>${p.id}</td><td><input data-id="${p.id}" data-k="name" value="${p.name}"/></td><td><input data-id="${p.id}" data-k="price" value="${p.price.toFixed(2).replace('.',',')}"/></td><td><input type="color" data-id="${p.id}" data-k="color" value="${color}" class="prod-color"/></td><td><select data-id="${p.id}" data-k="station">${stationOptions}</select></td><td style="text-align:center;"><input type="checkbox" data-id="${p.id}" data-k="active" ${p.active?'checked':''}/></td><td style="text-align:center;"><input type="checkbox" data-id="${p.id}" data-k="half" ${p.half?'checked':''}/></td><td style="text-align:right;"><button class="btn-del" data-id="${p.id}" title="Löschen" aria-label="Löschen">🗑️</button></td>`; tb.appendChild(tr); }); tbl.appendChild(tb);
   tb.addEventListener('click', async (e)=>{ const del=e.target.closest('.btn-del'); if(del){ const id=+del.dataset.id; if(!confirm(`Produkt #${id} wirklich löschen?`)) return; await api(`/api/products/${id}`,{method:'DELETE'}); await adminProductsLoad(); return; } const up=e.target.closest('.btn-up'); const down=e.target.closest('.btn-down'); if(!up&&!down) return; const id=+(up?up.dataset.id:down.dataset.id); const row=tb.querySelector(`tr[data-id="${id}"]`); if(up){ const prev=row.previousElementSibling; if(prev) tb.insertBefore(row,prev); } else { const next=row.nextElementSibling; if(next) tb.insertBefore(next,row); } $$('#prod-table tbody tr .btn-up').forEach((b,i)=> b.disabled=(i===0)); const rows=$$('#prod-table tbody tr'); rows.forEach((r,i)=>{ const dn=r.querySelector('.btn-down'); if(dn) dn.disabled=(i===rows.length-1); }); const ids=$$('#prod-table tbody tr').map(tr=>+tr.dataset.id); await api('/api/products/order',{method:'PUT', body:JSON.stringify({order:ids})}); state.products=await api('/api/products'); });
   let lastColorInput=null;
   $$('.prod-color').forEach(inp=>{ inp.addEventListener('focus',()=>lastColorInput=inp); inp.addEventListener('click',()=>lastColorInput=inp); });
   $$('#fav-colors .swatch').forEach(s=> s.addEventListener('click',()=>{ const c=s.dataset.color; if(lastColorInput) lastColorInput.value=c; }));
-  $('#btn-save-all-products').onclick = async ()=>{ const rows=$$('#prod-table tbody tr'); const ops=[]; rows.forEach(tr=>{ const id=+tr.dataset.id; const name=$(`input[data-id="${id}"][data-k="name"]`).value.trim(); const price=priceToNumber($(`input[data-id="${id}"][data-k="price"]`).value); const active=$(`input[data-id="${id}"][data-k="active"]`).checked; const half=$(`input[data-id="${id}"][data-k="half"]`).checked; const color=$(`input[data-id="${id}"][data-k="color"]`).value||null; const station=$(`select[data-id="${id}"][data-k="station"]`).value||null; const cur=state.products.find(p=>p.id===id)||{}; const changed=(name!==cur.name)||(Math.abs(price-(cur.price||0))>1e-9)||(!!active!==!!cur.active)||((color||null)!==(cur.color||null))||(!!half!==!!cur.half)||((station||null)!==(cur.station||null)); if(changed) ops.push(api(`/api/products/${id}`,{method:'PUT', body:JSON.stringify({name,price,active,color,half,station})})); }); if(ops.length===0) return showNotification('Keine Änderungen', 'info'); await Promise.all(ops); await adminProductsLoad(); showNotification('Änderungen gespeichert', 'success'); };
+  $('#btn-save-all-products').onclick = async ()=>{
+    const rows=$$('#prod-table tbody tr');
+    const updates=[];
+    rows.forEach(tr=>{
+      const id=+tr.dataset.id;
+      const name=$(`input[data-id="${id}"][data-k="name"]`).value.trim();
+      const price=priceToNumber($(`input[data-id="${id}"][data-k="price"]`).value);
+      const active=$(`input[data-id="${id}"][data-k="active"]`).checked;
+      const half=$(`input[data-id="${id}"][data-k="half"]`).checked;
+      const color=$(`input[data-id="${id}"][data-k="color"]`).value||null;
+      const station=$(`select[data-id="${id}"][data-k="station"]`).value||null;
+      const cur=state.products.find(p=>p.id===id)||{};
+      const changed=(name!==cur.name)||(Math.abs(price-(cur.price||0))>1e-9)||(!!active!==!!cur.active)||((color||null)!==(cur.color||null))||(!!half!==!!cur.half)||((station||null)!==(cur.station||null));
+      if(changed) updates.push({id,name,price,active,color,half,station});
+    });
+    if(updates.length===0) return showNotification('Keine Änderungen', 'info');
+    try{
+      await api('/api/products/bulk',{method:'PUT', body:JSON.stringify({updates})});
+    }catch(e){
+      return showNotification('Fehler: '+e.message, 'warning');
+    }
+    await adminProductsLoad();
+    showNotification('Änderungen gespeichert', 'success');
+  };
 }
 
 async function adminStationsLoad(){
