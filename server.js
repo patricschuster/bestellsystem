@@ -1,4 +1,4 @@
-// server.js (2.9 + WebSocket + Security)
+// server.js (2.9.1 + WebSocket + Security)
 import express from 'express';
 import http from 'http';
 import https from 'https';
@@ -159,7 +159,7 @@ function writeConfigEntry(key,val){
   db.prepare('INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(val));
 }
 
-app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.9', time:new Date().toISOString() }));
+app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.9.1', time:new Date().toISOString() }));
 
 // Config
 app.get('/api/config', (_req,res)=> res.json(readConfigMap()));
@@ -579,6 +579,16 @@ app.post('/api/orders/:id/items',(req,res)=>{
   return ok(res);
 });
 
+// Bediener-History: letzte N Bestellungen eines Bedieners (alle Status, inkl. paid/cancelled)
+app.get('/api/orders/history', (req,res)=>{
+  const waiter=(req.query.waiter||'').toString().trim();
+  if(!waiter) return res.status(400).json({error:'waiter required'});
+  const limit=Math.max(1,Math.min(200,parseInt(req.query.limit||'50',10)));
+  const orders=db.prepare('SELECT * FROM orders WHERE waiter=? ORDER BY datetime(created_at) DESC LIMIT ?').all(waiter,limit);
+  const itemsStmt=db.prepare('SELECT oi.id, oi.product_id, oi.ready, oi.paid, oi.cancelled, oi.comment, p.name, p.price_cents FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE order_id=?');
+  res.json(orders.map(o=>({ ...o, items: itemsStmt.all(o.id).map(i=>({ id:i.id, product_id:i.product_id, name:i.name, ready:!!i.ready, paid:!!i.paid, cancelled:!!i.cancelled, price:i.price_cents/100, comment:i.comment||null })) })));
+});
+
 // Report
 app.get('/api/report/summary', (_req,res)=>{ const sum=db.prepare('SELECT COALESCE(SUM(price_cents),0) AS cents FROM order_items WHERE cancelled=0').get(); const counts=db.prepare('SELECT p.name, COUNT(*) AS qty FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE oi.cancelled=0 GROUP BY p.id ORDER BY qty DESC').all(); res.json({ total:(sum.cents||0)/100, products:counts }); });
 app.post('/api/report/reset', (_req,res)=>{ const tx=db.transaction(()=>{ db.prepare('DELETE FROM order_items').run(); db.prepare('DELETE FROM orders').run(); }); tx(); return ok(res); });
@@ -772,9 +782,9 @@ function getOrderWithItems(orderId) {
 // =============================================================================
 
 httpServer.listen(PORT, () => {
-  console.log(`Bestellsystem v2.9 on http://localhost:${PORT}`);
+  console.log(`Bestellsystem v2.9.1 on http://localhost:${PORT}`);
   console.log(`WebSocket server ready`);
-  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.9' });
+  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.9.1' });
 });
 
 // HTTPS Server (mit selbstsigniertem Zertifikat)

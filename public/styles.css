@@ -622,6 +622,10 @@ textarea{resize:vertical;min-height:80px}
   background:#9ca3af;
   color:#1f2937;
 }
+.status-badge.status-cancelled{
+  background:#f87171;
+  color:#7f1d1d;
+}
 
 /* Favorites */
 .fav-star{
