@@ -1,4 +1,4 @@
-// src/db.js (Option B seed, v2.9.2)
+// src/db.js (Option B seed, v2.9.3)
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
@@ -137,6 +137,22 @@ INSERT INTO products(id,name,price_cents,color,half,active) VALUES
     if(!hasCancelledColumn){
       db.exec('ALTER TABLE order_items ADD COLUMN cancelled INTEGER DEFAULT 0');
       console.log('Added cancelled column to order_items');
+    }
+
+    // order_items: 'batch' Spalte (Wellen-Konzept für Nachbestellungen) - default 1 für Altdaten
+    const hasBatchColumn = db.prepare("PRAGMA table_info(order_items)").all().find(col => col.name === 'batch');
+    if(!hasBatchColumn){
+      db.exec('ALTER TABLE order_items ADD COLUMN batch INTEGER DEFAULT 1');
+      console.log('Added batch column to order_items');
+    }
+
+    // order_items: 'picked' Spalte (pro Batch separat abholbar)
+    const hasPickedColumn = db.prepare("PRAGMA table_info(order_items)").all().find(col => col.name === 'picked');
+    if(!hasPickedColumn){
+      db.exec('ALTER TABLE order_items ADD COLUMN picked INTEGER DEFAULT 0');
+      console.log('Added picked column to order_items');
+      // Altdaten: alle items in Orders mit status='picked' auch picked=1 setzen
+      db.exec("UPDATE order_items SET picked=1 WHERE order_id IN (SELECT id FROM orders WHERE status='picked')");
     }
   }
 

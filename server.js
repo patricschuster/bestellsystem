@@ -1,4 +1,4 @@
-// server.js (2.9.2 + WebSocket + Security)
+// server.js (2.9.3 + WebSocket + Security)
 import express from 'express';
 import http from 'http';
 import https from 'https';
@@ -157,7 +157,7 @@ function writeConfigEntry(key,val){
   db.prepare('INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(val));
 }
 
-app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.9.2', time:new Date().toISOString() }));
+app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.9.3', time:new Date().toISOString() }));
 
 // Config
 app.get('/api/config', (_req,res)=> res.json(readConfigMap()));
@@ -426,8 +426,8 @@ app.get('/api/system/status', (_req,res)=>{
 // Orders
 app.get('/api/orders', (_req,res)=>{
   let orders=db.prepare("SELECT * FROM orders WHERE status NOT IN ('paid','cancelled') OR (waiter='POS' AND status='paid') ORDER BY datetime(created_at) DESC").all();
-  const itemsStmt=db.prepare('SELECT oi.id, oi.product_id, oi.ready, oi.paid, oi.cancelled, oi.comment, p.name, p.price_cents FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE order_id=?');
-  res.json(orders.map(o=>({ ...o, items: itemsStmt.all(o.id).map(i=>({ id:i.id, product_id:i.product_id, name:i.name, ready:!!i.ready, paid:!!i.paid, cancelled:!!i.cancelled, price:i.price_cents/100, comment:i.comment||null })) })));
+  const itemsStmt=db.prepare('SELECT oi.id, oi.product_id, oi.ready, oi.paid, oi.cancelled, oi.comment, oi.batch, oi.picked, p.name, p.price_cents FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE order_id=?');
+  res.json(orders.map(o=>({ ...o, items: itemsStmt.all(o.id).map(i=>({ id:i.id, product_id:i.product_id, name:i.name, ready:!!i.ready, paid:!!i.paid, cancelled:!!i.cancelled, picked:!!i.picked, batch:i.batch||1, price:i.price_cents/100, comment:i.comment||null })) })));
 });
 app.post('/api/orders', validate(orderSchema), (req,res)=>{
   try{
@@ -443,7 +443,7 @@ app.post('/api/orders', validate(orderSchema), (req,res)=>{
     }
     const tx=db.transaction(()=>{
       const info=db.prepare("INSERT INTO orders(table_id,waiter,status) VALUES(?,?,'open')").run(table_id, waiter);
-      const ins=db.prepare('INSERT INTO order_items(order_id,product_id,ready,price_cents,comment) VALUES(?,?,0,?,?)');
+      const ins=db.prepare('INSERT INTO order_items(order_id,product_id,ready,price_cents,comment,batch) VALUES(?,?,0,?,?,1)');
       for(const {pid,price_cents,comment} of priced) ins.run(info.lastInsertRowid,pid,price_cents,comment);
       return info.lastInsertRowid;
     });
@@ -513,14 +513,56 @@ app.post('/api/orders/:id/ready', (req,res)=>{
 });
 app.post('/api/orders/:id/pickup', (req,res)=>{
   const id=+req.params.id;
-  db.prepare("UPDATE orders SET status='picked' WHERE id=?").run(id);
-
-  // 🚀 WebSocket: Broadcast updated order
+  const tx=db.transaction(()=>{
+    db.prepare("UPDATE order_items SET picked=1, ready=1 WHERE order_id=? AND cancelled=0").run(id);
+    db.prepare("UPDATE orders SET status='picked' WHERE id=?").run(id);
+  });
+  tx();
   const updatedOrder = getOrderWithItems(id);
-  if (updatedOrder) {
-    broadcast('order:updated', updatedOrder);
-  }
+  if (updatedOrder) broadcast('order:updated', updatedOrder);
+  return ok(res);
+});
 
+// Batch-spezifisch: alle Items dieser Welle bereit setzen
+app.post('/api/orders/:id/batch/:batch/ready', (req,res)=>{
+  const id=+req.params.id;
+  const batch=+req.params.batch;
+  const tx=db.transaction(()=>{
+    db.prepare('UPDATE order_items SET ready=1 WHERE order_id=? AND batch=? AND cancelled=0').run(id,batch);
+    // Order-Status neu berechnen
+    const items=db.prepare('SELECT ready, picked, cancelled FROM order_items WHERE order_id=?').all(id);
+    const active=items.filter(i=>!i.cancelled);
+    const allPicked=active.length>0 && active.every(i=>i.picked);
+    const allReady=active.length>0 && active.every(i=>i.ready);
+    let status='open';
+    if(allPicked) status='picked';
+    else if(allReady) status='ready';
+    db.prepare('UPDATE orders SET status=? WHERE id=?').run(status,id);
+  });
+  tx();
+  const updatedOrder=getOrderWithItems(id);
+  if(updatedOrder) broadcast('order:updated', updatedOrder);
+  return ok(res);
+});
+
+// Batch-spezifisch: alle Items dieser Welle als abgeholt markieren
+app.post('/api/orders/:id/batch/:batch/pickup', (req,res)=>{
+  const id=+req.params.id;
+  const batch=+req.params.batch;
+  const tx=db.transaction(()=>{
+    db.prepare('UPDATE order_items SET picked=1, ready=1 WHERE order_id=? AND batch=? AND cancelled=0').run(id,batch);
+    const items=db.prepare('SELECT ready, picked, cancelled FROM order_items WHERE order_id=?').all(id);
+    const active=items.filter(i=>!i.cancelled);
+    const allPicked=active.length>0 && active.every(i=>i.picked);
+    const allReady=active.length>0 && active.every(i=>i.ready);
+    let status='open';
+    if(allPicked) status='picked';
+    else if(allReady) status='ready';
+    db.prepare('UPDATE orders SET status=? WHERE id=?').run(status,id);
+  });
+  tx();
+  const updatedOrder=getOrderWithItems(id);
+  if(updatedOrder) broadcast('order:updated', updatedOrder);
   return ok(res);
 });
 app.post('/api/orders/:id/pay', (req,res)=>{
@@ -604,7 +646,7 @@ app.delete('/api/orders/:id', (req,res)=>{
   return ok(res);
 });
 
-// Bestellung nachträglich ergänzen
+// Bestellung nachträglich ergänzen - die neuen Items kommen in einen neuen Batch (Welle)
 app.post('/api/orders/:id/items',(req,res)=>{
   const id=+req.params.id;
   const order=db.prepare('SELECT * FROM orders WHERE id=?').get(id);
@@ -613,20 +655,40 @@ app.post('/api/orders/:id/items',(req,res)=>{
   const {items}=req.body;
   if(!Array.isArray(items)||items.length===0) return res.status(400).json({error:'items required'});
   const get=db.prepare('SELECT price_cents FROM products WHERE id=?');
-  const ins=db.prepare('INSERT INTO order_items(order_id,product_id,ready,price_cents,comment) VALUES(?,?,0,?,?)');
+  const ins=db.prepare('INSERT INTO order_items(order_id,product_id,ready,price_cents,comment,batch) VALUES(?,?,0,?,?,?)');
+  let newBatch=1;
+  const newItemIds=[];
   const tx=db.transaction(()=>{
+    // Bereits 'bereite' Items aus früheren Wellen sind aus Theken-Sicht erledigt → auto-picken,
+    // damit die alte Card aus der Theke verschwindet und nur die neue Welle übrig bleibt.
+    // Noch nicht bereite Items bleiben sichtbar (die Theke darf sie nicht "verlieren").
+    db.prepare("UPDATE order_items SET picked=1 WHERE order_id=? AND ready=1 AND picked=0 AND cancelled=0").run(id);
+
+    const maxBatchRow=db.prepare('SELECT COALESCE(MAX(batch),0) AS m FROM order_items WHERE order_id=?').get(id);
+    newBatch=(maxBatchRow?.m||0)+1;
     for(const item of items){
       const pid=typeof item==='object'?item.product_id:item;
       const comment=typeof item==='object'?item.comment:null;
       const p=get.get(pid);
       if(!p) throw new Error('invalid product id: '+pid);
-      ins.run(id,pid,p.price_cents,comment);
+      const info=ins.run(id,pid,p.price_cents,comment,newBatch);
+      newItemIds.push(info.lastInsertRowid);
     }
-    db.prepare("UPDATE orders SET status='open' WHERE id=? AND status='ready'").run(id);
+    // Order zurück auf 'open' (auch wenn vorher ready oder picked) – neue Welle muss zubereitet werden
+    db.prepare("UPDATE orders SET status='open' WHERE id=? AND status IN ('ready','picked')").run(id);
   });
   try{ tx(); }catch(e){ return res.status(400).json({error:e.message}); }
   const updatedOrder=getOrderWithItems(id);
   if(updatedOrder) broadcast('order:updated',updatedOrder);
+  // Dediziertes Event für die Theke - dort wird die neue Welle als separate Card gerendert + Sound gespielt
+  broadcast('order:items_added',{
+    orderId:id,
+    table_id:order.table_id,
+    waiter:order.waiter,
+    batch:newBatch,
+    items: updatedOrder ? updatedOrder.items.filter(it=>newItemIds.includes(it.id)) : []
+  });
+  log('info','order',`Items added to order #${id}`,{batch:newBatch,count:newItemIds.length});
   return ok(res);
 });
 
@@ -638,8 +700,8 @@ app.get('/api/orders/history', (req,res)=>{
   const orders = waiter
     ? db.prepare('SELECT * FROM orders WHERE waiter=? ORDER BY datetime(created_at) DESC LIMIT ?').all(waiter,limit)
     : db.prepare('SELECT * FROM orders ORDER BY datetime(created_at) DESC LIMIT ?').all(limit);
-  const itemsStmt=db.prepare('SELECT oi.id, oi.product_id, oi.ready, oi.paid, oi.cancelled, oi.comment, p.name, p.price_cents FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE order_id=?');
-  res.json(orders.map(o=>({ ...o, items: itemsStmt.all(o.id).map(i=>({ id:i.id, product_id:i.product_id, name:i.name, ready:!!i.ready, paid:!!i.paid, cancelled:!!i.cancelled, price:i.price_cents/100, comment:i.comment||null })) })));
+  const itemsStmt=db.prepare('SELECT oi.id, oi.product_id, oi.ready, oi.paid, oi.cancelled, oi.comment, oi.batch, oi.picked, p.name, p.price_cents FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE order_id=?');
+  res.json(orders.map(o=>({ ...o, items: itemsStmt.all(o.id).map(i=>({ id:i.id, product_id:i.product_id, name:i.name, ready:!!i.ready, paid:!!i.paid, cancelled:!!i.cancelled, picked:!!i.picked, batch:i.batch||1, price:i.price_cents/100, comment:i.comment||null })) })));
 });
 
 // Report
@@ -694,7 +756,7 @@ wss.on('connection', (ws, req) => {
   // Send initial data to newly connected client
   try {
     const orders = db.prepare("SELECT * FROM orders WHERE status NOT IN ('paid','cancelled') OR (waiter='POS' AND status='paid') ORDER BY datetime(created_at) DESC").all();
-    const itemsStmt = db.prepare('SELECT oi.id, oi.product_id, oi.ready, oi.paid, oi.comment, p.name, p.price_cents FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE order_id=?');
+    const itemsStmt = db.prepare('SELECT oi.id, oi.product_id, oi.ready, oi.paid, oi.cancelled, oi.comment, oi.batch, oi.picked, p.name, p.price_cents FROM order_items oi JOIN products p ON p.id=oi.product_id WHERE order_id=?');
     const ordersWithItems = orders.map(o => ({
       ...o,
       items: itemsStmt.all(o.id).map(i => ({
@@ -703,6 +765,9 @@ wss.on('connection', (ws, req) => {
         name: i.name,
         ready: !!i.ready,
         paid: !!i.paid,
+        cancelled: !!i.cancelled,
+        picked: !!i.picked,
+        batch: i.batch || 1,
         price: i.price_cents / 100,
         comment: i.comment || null
       }))
@@ -812,7 +877,7 @@ function getOrderWithItems(orderId) {
   if (!order) return null;
 
   const items = db.prepare(`
-    SELECT oi.id, oi.product_id, oi.ready, oi.paid, oi.cancelled, oi.comment, p.name, p.price_cents
+    SELECT oi.id, oi.product_id, oi.ready, oi.paid, oi.cancelled, oi.comment, oi.batch, oi.picked, p.name, p.price_cents
     FROM order_items oi
     JOIN products p ON p.id=oi.product_id
     WHERE order_id=?
@@ -823,6 +888,8 @@ function getOrderWithItems(orderId) {
     ready: !!i.ready,
     paid: !!i.paid,
     cancelled: !!i.cancelled,
+    picked: !!i.picked,
+    batch: i.batch || 1,
     price: i.price_cents / 100,
     comment: i.comment || null
   }));
@@ -835,9 +902,9 @@ function getOrderWithItems(orderId) {
 // =============================================================================
 
 httpServer.listen(PORT, () => {
-  console.log(`Bestellsystem v2.9.2 on http://localhost:${PORT}`);
+  console.log(`Bestellsystem v2.9.3 on http://localhost:${PORT}`);
   console.log(`WebSocket server ready`);
-  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.9.2' });
+  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.9.3' });
 });
 
 // HTTPS Server (mit selbstsigniertem Zertifikat)

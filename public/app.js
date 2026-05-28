@@ -1,9 +1,9 @@
-// app.js (v2.9.2 + POS)
+// app.js (v2.9.3 + POS)
 const $  = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
 const on = (sel,evt,fn)=>{ const el=(typeof sel==='string')?$(sel):sel; if(el) el.addEventListener(evt,fn); };
 
-const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.9.2', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
+const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.9.3', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
 
 async function api(path, opts={}){ const res=await fetch(path,{ headers:{'Content-Type':'application/json'}, ...opts }); if(!res.ok){ let t=await res.text(); try{ const j=JSON.parse(t); t=j.error||j.message||t; }catch{}; throw new Error(t); } return res.json(); }
 
@@ -313,6 +313,18 @@ function handleWebSocketEvent(event, data) {
           location.reload();
         }, 2500);
       }
+      break;
+
+    case 'order:items_added':
+      // Nachträglich ergänzte Items - für die Theke wie eine neue Order (Sound + Toast)
+      console.log('[WebSocket] Items added to order:', data.orderId, 'batch', data.batch);
+      if (state.role === 'bar' && !$('#view-theke').classList.contains('hidden')) {
+        playNotificationSound();
+        const tableLbl = data.waiter==='POS' ? 'POS' : `Tisch ${tableDisplayNum(data.table_id)}`;
+        const n = (data.items||[]).length;
+        showNotification(`${tableLbl}: ${n} Produkt${n!==1?'e':''} ergänzt`, 'info');
+      }
+      // state.orders wurde bereits über order:updated aktualisiert (vom Server vorher gesendet)
       break;
 
     case 'order:cancelled':
@@ -738,7 +750,12 @@ on('#btn-back-header','click', ()=>{
   if(currentView && currentView.id==='view-products' && addToOrderId){ addToOrderId=null; basket.clear(); openCashDetail(currentCashOrder.id); return; }
   if(currentView && currentView.id==='view-pos-history') show('#view-theke');
   else if(currentView && currentView.id==='view-orders-history') show('#view-tables');
-  else if(currentView && currentView.id==='view-cash-detail'){ renderCash(); show('#view-cash'); }
+  else if(currentView && currentView.id==='view-cash-detail'){
+    const ret = state.cashDetailReturnTo || '#view-cash';
+    state.cashDetailReturnTo = null;
+    if(ret === '#view-tables'){ renderTables(); show('#view-tables'); }
+    else { renderCash(); show('#view-cash'); }
+  }
   else if(currentView && currentView.id==='view-cash') show('#view-tables');
   else show('#view-tables');
 });
@@ -805,14 +822,15 @@ on('#btn-confirm-change','click', async ()=>{
 
       // Update cash detail view if we're in it
       if(currentCashOrder && currentCashOrder.id==orderId){
+        const wasInCashDetail = !$('#view-cash-detail').classList.contains('hidden');
         currentCashOrder=state.orders.find(o=>o.id==orderId);
         if(!currentCashOrder || currentCashOrder.status==='paid'){
-          // Order fully paid, return to cash overview
-          renderCash();
+          // Order vollständig bezahlt → direkt zur Tisch-Übersicht (statt Cash-Liste)
+          state.cashDetailReturnTo=null;
           renderTables();
-          show('#view-cash');
-        } else {
-          // Still unpaid items, refresh detail view
+          show('#view-tables');
+        } else if(wasInCashDetail) {
+          // Noch unbezahlte Items, im Detail bleiben
           selectedItems.clear();
           renderCashDetail();
         }
@@ -1008,6 +1026,24 @@ function renderTables(){
     });
     b.addEventListener('click',(e)=>{
       if(pressTimer){ clearTimeout(pressTimer); pressTimer=null; }
+      // Smart-Click: aktive Bestellung(en) auf dem Tisch → Cash-Detail; sonst Produkt-Grid
+      if(by[t.id]){
+        const myOrders=state.orders.filter(o =>
+          o.table_id===t.id &&
+          o.waiter===state.user &&
+          o.status!=='paid' &&
+          o.status!=='cancelled'
+        );
+        if(myOrders.length===1){
+          openCashDetail(myOrders[0].id, '#view-tables');
+          return;
+        }
+        if(myOrders.length>1){
+          renderCash();
+          show('#view-cash');
+          return;
+        }
+      }
       openProducts(t.id);
     });
 
@@ -1262,10 +1298,11 @@ function renderCash(){
 let currentCashOrder=null;
 let selectedItems=new Set();
 
-function openCashDetail(orderId){
+function openCashDetail(orderId, returnTo='#view-cash'){
   currentCashOrder=state.orders.find(o=>o.id===orderId);
   if(!currentCashOrder) return;
   selectedItems.clear();
+  state.cashDetailReturnTo=returnTo;
   renderCashDetail();
   show('#view-cash-detail');
   const hdrRight=$('#hdr-right');
@@ -1411,9 +1448,10 @@ function renderCashDetail(){
     state.orders=await api('/api/orders');
     currentCashOrder=state.orders.find(o=>o.id===currentCashOrder.id);
     if(!currentCashOrder || currentCashOrder.status==='paid'){
-      renderCash();
+      // Bestellung komplett bezahlt → direkt zurück zur Tisch-Übersicht
+      state.cashDetailReturnTo=null;
       renderTables();
-      show('#view-cash');
+      show('#view-tables');
     } else {
       selectedItems.clear();
       renderCashDetail();
@@ -1426,9 +1464,10 @@ function renderCashDetail(){
   payAllBtn.addEventListener('click',async ()=>{
     await api(`/api/orders/${currentCashOrder.id}/pay`,{method:'POST'});
     state.orders=await api('/api/orders');
-    renderCash();
+    // Alles bezahlt → direkt zur Tisch-Übersicht
+    state.cashDetailReturnTo=null;
     renderTables();
-    show('#view-cash');
+    show('#view-tables');
   });
 
   const addBtn=document.createElement('button');
@@ -1666,6 +1705,108 @@ function renderStationMode(){
   cols.appendChild(grid);
 }
 
+// Helper: aus Orders eine flache Liste von [{order, batch, items}] machen.
+// Eine Batch ist renderbar, wenn min. ein Item noch nicht picked und nicht cancelled ist.
+function getRenderableBatches(orders){
+  const result=[];
+  orders.forEach(o=>{
+    const map=new Map();
+    o.items.forEach(it=>{
+      if(it.cancelled) return;
+      const b=it.batch||1;
+      if(!map.has(b)) map.set(b,[]);
+      map.get(b).push(it);
+    });
+    Array.from(map.keys()).sort((a,b)=>a-b).forEach(b=>{
+      const items=map.get(b);
+      if(items.every(it=>it.picked)) return;
+      result.push({order:o, batch:b, items});
+    });
+  });
+  return result;
+}
+
+// Helper: baut eine Card für eine einzelne Batch
+function buildBatchCard(o, batch, batchItems){
+  const card=document.createElement('div');
+  card.className='order-card';
+  const layout=(state.config.theke_layout||'badges');
+  const row=document.createElement('div');
+  row.className='row';
+  const meta=document.createElement('div');
+  meta.className='meta';
+  const h=document.createElement('div');
+  const tableLabel=o.waiter==='POS'?'POS':`Tisch ${tableDisplayNum(o.table_id)}`;
+  const batchSuffix=batch>1?` · +${batch-1}`:'';
+  h.innerHTML=`<strong>${tableLabel}${batchSuffix}</strong>`;
+  const t=document.createElement('div');
+  t.className='time';
+  t.textContent=fmtAgeMinutes(o.created_at);
+  meta.append(h,t);
+  const allReady=batchItems.every(it=>it.ready);
+  if(layout==='badges'){
+    const bd=document.createElement('span');
+    bd.className='status '+(allReady?'ready':'open');
+    bd.textContent=allReady?'bereit':'offen';
+    row.append(meta,bd);
+  } else {
+    card.classList.add(allReady?'bg-ready':'bg-open');
+    row.append(meta,document.createElement('span'));
+  }
+  card.appendChild(row);
+  const itemsDiv=document.createElement('div');
+  itemsDiv.className='items';
+  batchItems.forEach(it=>{
+    const line=document.createElement('div');
+    line.className='item '+(it.ready?'ready':'');
+    line.textContent=productName(it.product_id);
+    if(it.comment){
+      const commentDiv=document.createElement('div');
+      commentDiv.className='item-comment';
+      const icon=document.createElement('span');
+      icon.className='material-symbols-outlined';
+      icon.textContent='chat_bubble';
+      commentDiv.appendChild(icon);
+      commentDiv.appendChild(document.createTextNode(it.comment));
+      line.appendChild(commentDiv);
+    }
+    line.addEventListener('click', async ()=>{
+      await api(`/api/orders/${o.id}/items/${it.id}/toggle-ready`,{method:'PATCH'});
+      state.orders=await api('/api/orders');
+      renderTheke();
+    });
+    itemsDiv.appendChild(line);
+  });
+  card.appendChild(itemsDiv);
+  const actions=document.createElement('div');
+  actions.className='actions';
+  const leftA=document.createElement('div');
+  leftA.className='left';
+  const rightA=document.createElement('div');
+  rightA.className='right';
+  const allReadyBtn=document.createElement('button');
+  allReadyBtn.className='outline order-action-btn';
+  allReadyBtn.textContent='Alle bereit';
+  allReadyBtn.addEventListener('click', async ()=>{
+    await api(`/api/orders/${o.id}/batch/${batch}/ready`,{method:'POST'});
+    state.orders=await api('/api/orders');
+    renderTheke();
+  });
+  leftA.appendChild(allReadyBtn);
+  const pick=document.createElement('button');
+  pick.className='outline order-action-btn';
+  pick.textContent='Abgeholt';
+  pick.addEventListener('click', async ()=>{
+    await api(`/api/orders/${o.id}/batch/${batch}/pickup`,{method:'POST'});
+    state.orders=await api('/api/orders');
+    renderTheke();
+  });
+  rightA.appendChild(pick);
+  actions.append(leftA,rightA);
+  card.appendChild(actions);
+  return card;
+}
+
 function renderKitchenMode(){
   const cols=$('#theke-columns');
   cols.innerHTML='';
@@ -1674,13 +1815,9 @@ function renderKitchenMode(){
   // Sammle aktive Bediener (aus Sessions) - POS NICHT filtern
   const activeWaiters=state.sessions.map(s=>s.waiter);
 
-  // Gruppiere offene Bestellungen nach Bediener
+  // Gruppiere Orders nach Bediener. Order ist sichtbar wenn min. ein Item noch nicht picked.
   const groups={};
-  state.orders.filter(o=>{
-    if(o.status==='picked') return false;
-    if(o.waiter==='POS') return true; // POS: auch 'paid' anzeigen
-    return o.status!=='paid'; // Andere: nur wenn nicht 'paid'
-  }).forEach(o=>{
+  state.orders.filter(o=>o.items.some(it=>!it.picked && !it.cancelled)).forEach(o=>{
     (groups[o.waiter]=groups[o.waiter]||[]).push(o);
   });
 
@@ -1726,7 +1863,8 @@ function renderKitchenMode(){
     title.textContent=w||'—';
     col.appendChild(title);
 
-    if(list.length===0){
+    const batchCards=getRenderableBatches(list);
+    if(batchCards.length===0){
       const empty=document.createElement('div');
       empty.className='muted';
       empty.style.padding='12px';
@@ -1734,85 +1872,8 @@ function renderKitchenMode(){
       empty.textContent='Keine offenen Bestellungen';
       col.appendChild(empty);
     } else {
-      list.forEach(o=>{
-        const card=document.createElement('div');
-        card.className='order-card';
-        const layout=(state.config.theke_layout||'badges');
-        const row=document.createElement('div');
-        row.className='row';
-        const meta=document.createElement('div');
-        meta.className='meta';
-        const h=document.createElement('div');
-        const tableLabel=o.waiter==='POS'?'POS':`Tisch ${tableDisplayNum(o.table_id)}`;
-        h.innerHTML=`<strong>${tableLabel}</strong>`;
-        const t=document.createElement('div');
-        t.className='time';
-        t.textContent=fmtAgeMinutes(o.created_at);
-        meta.append(h,t);
-        if(layout==='badges'){
-          const b=document.createElement('span');
-          const ready=isOrderReady(o);
-          b.className='status '+(ready?'ready':'open');
-          b.textContent=ready?'bereit':'offen';
-          row.append(meta,b);
-        } else {
-          card.classList.add(isOrderReady(o)?'bg-ready':'bg-open');
-          row.append(meta,document.createElement('span'));
-        }
-        card.appendChild(row);
-        const items=document.createElement('div');
-        items.className='items';
-        o.items.filter(it=>!it.cancelled).forEach(it=>{
-          const line=document.createElement('div');
-          line.className='item '+(it.ready?'ready':'');
-          line.textContent=productName(it.product_id);
-          if(it.comment){
-            const commentDiv=document.createElement('div');
-            commentDiv.className='item-comment';
-            const icon=document.createElement('span');
-            icon.className='material-symbols-outlined';
-            icon.textContent='chat_bubble';
-            commentDiv.appendChild(icon);
-            commentDiv.appendChild(document.createTextNode(it.comment));
-            line.appendChild(commentDiv);
-          }
-          line.addEventListener('click', async ()=>{
-            await api(`/api/orders/${o.id}/items/${it.id}/toggle-ready`,{method:'PATCH'});
-            state.orders=await api('/api/orders');
-            renderTheke();
-          });
-          items.appendChild(line);
-        });
-        card.appendChild(items);
-        const actions=document.createElement('div');
-        actions.className='actions';
-        const left=document.createElement('div');
-        left.className='left';
-        const right=document.createElement('div');
-        right.className='right';
-        const allReady=document.createElement('button');
-        allReady.className='outline order-action-btn';
-        allReady.textContent='Alle bereit';
-        allReady.addEventListener('click', async ()=>{
-          for(const it of o.items){
-            if(!it.ready) await api(`/api/orders/${o.id}/items/${it.id}/toggle-ready`,{method:'PATCH'});
-          }
-          state.orders=await api('/api/orders');
-          renderTheke();
-        });
-        left.appendChild(allReady);
-        const pick=document.createElement('button');
-        pick.className='outline order-action-btn';
-        pick.textContent='Abgeholt';
-        pick.addEventListener('click', async ()=>{
-          await api(`/api/orders/${o.id}/pickup`,{method:'POST'});
-          state.orders=await api('/api/orders');
-          renderTheke();
-        });
-        right.appendChild(pick);
-        actions.append(left,right);
-        card.appendChild(actions);
-        col.appendChild(card);
+      batchCards.forEach(({order, batch, items})=>{
+        col.appendChild(buildBatchCard(order, batch, items));
       });
     }
 
@@ -1854,23 +1915,16 @@ function renderBedienerColumn(container){
   const activeWaiters=state.sessions.filter(s=>s.waiter!=='Theke' && s.waiter!=='Admin').map(s=>s.waiter);
 
   const groups={};
-  state.orders.filter(o=>{
-    if(o.status==='picked') return false;
-    if(o.waiter==='POS') return true; // POS: auch 'paid' anzeigen
-    return o.status!=='paid'; // Andere: nur wenn nicht 'paid'
-  }).forEach(o=>{
+  state.orders.filter(o=>o.items.some(it=>!it.picked && !it.cancelled)).forEach(o=>{
     (groups[o.waiter]=groups[o.waiter]||[]).push(o);
   });
 
-  // Alle Bediener mit offenen Bestellungen einschließen, auch wenn nicht mehr eingeloggt
   const allWaiters=[...activeWaiters];
   Object.keys(groups).forEach(w=>{ if(!allWaiters.includes(w)) allWaiters.push(w); });
 
-  // Sortierung: POS immer ganz rechts, dann bei mehr als 4 Bedienungen -> mit Bestellungen zuerst, sonst alphabetisch
   let waiters;
   if(allWaiters.length>4){
     waiters=allWaiters.sort((a,b)=>{
-      // POS immer ans Ende (ganz rechts)
       if(a==='POS') return 1;
       if(b==='POS') return -1;
       const hasOrdersA=(groups[a]&&groups[a].length>0)?1:0;
@@ -1880,111 +1934,28 @@ function renderBedienerColumn(container){
     });
   } else {
     waiters=allWaiters.sort((a,b)=>{
-      // POS immer ans Ende (ganz rechts)
       if(a==='POS') return 1;
       if(b==='POS') return -1;
       return a.localeCompare(b);
     });
   }
 
-  // Bei mehreren Bedienern: Erstelle für jeden eine eigene theke-col
-  // Bei einem Bediener: Nur eine theke-col
   waiters.forEach(w=>{
     const list=groups[w]||[];
-
-    // Im POS-Modus: Überspringe Bedienungen ohne offene Bestellungen
     if(list.length===0) return;
-
     list.sort((a,b)=>a.created_at.localeCompare(b.created_at));
 
     const col=document.createElement('div');
     col.className='theke-col';
 
-    // Name wie bei POS:AUS als col-title
     const title=document.createElement('div');
     title.className='col-title';
     title.textContent=w||'—';
     col.appendChild(title);
 
-    list.forEach(o=>{
-        const card=document.createElement('div');
-        card.className='order-card';
-        const layout=(state.config.theke_layout||'badges');
-        const row=document.createElement('div');
-        row.className='row';
-        const meta=document.createElement('div');
-        meta.className='meta';
-        const h=document.createElement('div');
-        const tableLabel=o.waiter==='POS'?'POS':`Tisch ${tableDisplayNum(o.table_id)}`;
-        h.innerHTML=`<strong>${tableLabel}</strong>`;
-        const t=document.createElement('div');
-        t.className='time';
-        t.textContent=fmtAgeMinutes(o.created_at);
-        meta.append(h,t);
-        if(layout==='badges'){
-          const b=document.createElement('span');
-          const ready=isOrderReady(o);
-          b.className='status '+(ready?'ready':'open');
-          b.textContent=ready?'bereit':'offen';
-          row.append(meta,b);
-        } else {
-          card.classList.add(isOrderReady(o)?'bg-ready':'bg-open');
-          row.append(meta,document.createElement('span'));
-        }
-        card.appendChild(row);
-        const items=document.createElement('div');
-        items.className='items';
-        o.items.filter(it=>!it.cancelled).forEach(it=>{
-          const line=document.createElement('div');
-          line.className='item '+(it.ready?'ready':'');
-          line.textContent=productName(it.product_id);
-          if(it.comment){
-            const commentDiv=document.createElement('div');
-            commentDiv.className='item-comment';
-            const icon=document.createElement('span');
-            icon.className='material-symbols-outlined';
-            icon.textContent='chat_bubble';
-            commentDiv.appendChild(icon);
-            commentDiv.appendChild(document.createTextNode(it.comment));
-            line.appendChild(commentDiv);
-          }
-          line.addEventListener('click', async ()=>{
-            await api(`/api/orders/${o.id}/items/${it.id}/toggle-ready`,{method:'PATCH'});
-            state.orders=await api('/api/orders');
-            renderTheke();
-          });
-          items.appendChild(line);
-        });
-        card.appendChild(items);
-        const actions=document.createElement('div');
-        actions.className='actions';
-        const left=document.createElement('div');
-        left.className='left';
-        const right=document.createElement('div');
-        right.className='right';
-        const allReady=document.createElement('button');
-        allReady.className='outline order-action-btn';
-        allReady.textContent='Alle bereit';
-        allReady.addEventListener('click', async ()=>{
-          for(const it of o.items){
-            if(!it.ready) await api(`/api/orders/${o.id}/items/${it.id}/toggle-ready`,{method:'PATCH'});
-          }
-          state.orders=await api('/api/orders');
-          renderTheke();
-        });
-        left.appendChild(allReady);
-        const pick=document.createElement('button');
-        pick.className='outline order-action-btn';
-        pick.textContent='Abgeholt';
-        pick.addEventListener('click', async ()=>{
-          await api(`/api/orders/${o.id}/pickup`,{method:'POST'});
-          state.orders=await api('/api/orders');
-          renderTheke();
-        });
-        right.appendChild(pick);
-        actions.append(left,right);
-        card.appendChild(actions);
-        col.appendChild(card);
+    const batchCards=getRenderableBatches(list);
+    batchCards.forEach(({order, batch, items})=>{
+      col.appendChild(buildBatchCard(order, batch, items));
     });
 
     container.appendChild(col);
