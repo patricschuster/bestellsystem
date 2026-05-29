@@ -28,6 +28,8 @@ html,body{
   overflow-x:hidden;
   /* Modern: Verhindert Rubber-banding */
   overscroll-behavior:none;
+  /* iOS PWA: Pinch-Zoom auf allen Seiten unterbinden, Pan bleibt erlaubt */
+  touch-action:pan-x pan-y;
 }
 
 /* iOS Standalone: Body Scroll-Lock nur im Thekenmodus */
