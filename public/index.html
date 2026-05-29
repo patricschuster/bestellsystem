@@ -296,7 +296,7 @@
     </div>
     <div class="admin-row">
       <div class="admin-card">
-        <h3>System-Status</h3>
+        <h3>System-Status <button id="btn-show-thresholds" class="ghost" style="float:right;min-height:32px;padding:4px 10px;" title="Schwellwerte anzeigen">ⓘ Schwellwerte</button></h3>
         <div id="system-status"></div>
       </div>
       <div class="admin-card">
@@ -310,6 +310,37 @@
     </div>
   </section>
 </main>
+
+<div id="thresholds-modal" class="modal hidden">
+  <div class="modal-content" style="max-width:760px;">
+    <div class="modal-header">
+      <h3>Ampel-Schwellwerte</h3>
+      <button id="btn-close-thresholds" class="ghost"><span class="material-symbols-outlined">close</span></button>
+    </div>
+    <div class="modal-body">
+      <table class="threshold-table">
+        <thead><tr><th>Metrik</th><th>🟢 OK</th><th>🟡 Warnung</th><th>🔴 Kritisch</th></tr></thead>
+        <tbody>
+          <tr><td>CPU-Last</td><td>&lt; 50&nbsp;%</td><td>50–80&nbsp;%</td><td>&gt; 80&nbsp;%</td></tr>
+          <tr><td>RAM</td><td>&lt; 70&nbsp;%</td><td>70–85&nbsp;%</td><td>&gt; 85&nbsp;%</td></tr>
+          <tr><td>CPU-Temp</td><td>&lt; 70&nbsp;°C</td><td>70–80&nbsp;°C</td><td>&gt; 80&nbsp;°C</td></tr>
+          <tr><td>Disk</td><td>&lt; 70&nbsp;%</td><td>70–85&nbsp;%</td><td>&gt; 85&nbsp;%</td></tr>
+          <tr><td>Pi-Throttling</td><td>OK, nie aufgetreten</td><td>OK, aber Historie seit Boot</td><td>Aktuell aktiv</td></tr>
+          <tr><td>DB-Größe</td><td>&lt; 100&nbsp;MB</td><td>100–500&nbsp;MB</td><td>&gt; 500&nbsp;MB</td></tr>
+          <tr><td>Node Heap (used/total)</td><td>&lt; 70&nbsp;%</td><td>70–90&nbsp;%</td><td>&gt; 90&nbsp;%</td></tr>
+          <tr><td>Event-Loop p95</td><td>&lt; 50&nbsp;ms</td><td>50–200&nbsp;ms</td><td>&gt; 200&nbsp;ms</td></tr>
+          <tr><td>HTTP-Fehler (60s)</td><td>0</td><td>1–10</td><td>&gt; 10</td></tr>
+          <tr><td>Open File Descriptors</td><td>&lt; 500</td><td>500–900</td><td>&gt; 900</td></tr>
+          <tr><td>WLAN-Signal</td><td>besser als −60 dBm</td><td>−60 bis −75 dBm</td><td>schlechter als −75 dBm</td></tr>
+        </tbody>
+      </table>
+      <p class="muted small" style="margin-top:14px;">Network-Throughput und Uptime werden ohne Ampel dargestellt (Kontext-abhängig).</p>
+    </div>
+    <div class="modal-footer">
+      <button id="btn-close-thresholds-footer" class="primary">Schließen</button>
+    </div>
+  </div>
+</div>
 
 <script src="/sw-register.js"></script>
 <script src="/app.js"></script>

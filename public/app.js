@@ -1,9 +1,9 @@
-// app.js (v2.9.8 + POS)
+// app.js (v2.9.9 + POS)
 const $  = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
 const on = (sel,evt,fn)=>{ const el=(typeof sel==='string')?$(sel):sel; if(el) el.addEventListener(evt,fn); };
 
-const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.9.8', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
+const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.9.9', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
 
 // iOS PWA: Pinch-Zoom (Multi-Touch) komplett blocken (Safari Gesture Events)
 document.addEventListener('gesturestart', (e) => e.preventDefault());
@@ -796,6 +796,9 @@ on('#btn-fav-filter','click', ()=>{
 });
 on('#btn-close-fav-modal','click', ()=>closeFavoritesSettings());
 on('#btn-close-fav-modal-footer','click', ()=>closeFavoritesSettings());
+on('#btn-show-thresholds','click', ()=>$('#thresholds-modal').classList.remove('hidden'));
+on('#btn-close-thresholds','click', ()=>$('#thresholds-modal').classList.add('hidden'));
+on('#btn-close-thresholds-footer','click', ()=>$('#thresholds-modal').classList.add('hidden'));
 on('#btn-clear-all-fav','click', ()=>{ if(confirm('Wirklich alle Favoriten entfernen?')){ clearAllFavorites(); renderFavoritesSettings(); renderTables(); } });
 on('#btn-close-comment-modal','click', ()=>closeCommentDialog());
 on('#btn-cancel-comment','click', ()=>closeCommentDialog());
@@ -2542,13 +2545,34 @@ async function adminSystemLoad(){
     if(bps>=1024)    return (bps/1024).toFixed(1)+' KB/s';
     return bps+' B/s';
   };
+  // Ampel-Klassifizierer pro Metrik (ok/warn/crit)
+  const classify=(type,value)=>{
+    switch(type){
+      case 'percent_load': return value<50 ? 'ok' : value<80 ? 'warn' : 'crit';
+      case 'percent_ram':  return value<70 ? 'ok' : value<85 ? 'warn' : 'crit';
+      case 'temp':         return value<70 ? 'ok' : value<80 ? 'warn' : 'crit';
+      case 'percent_disk': return value<70 ? 'ok' : value<85 ? 'warn' : 'crit';
+      case 'throttling': {
+        if(!value.ok) return 'crit';
+        const everSeen = value.undervoltageEver||value.armFreqCappedEver||value.throttledEver||value.tempLimitEver;
+        return everSeen ? 'warn' : 'ok';
+      }
+      case 'db_mb':        return value<100 ? 'ok' : value<500 ? 'warn' : 'crit';
+      case 'heap_percent': return value<70 ? 'ok' : value<90 ? 'warn' : 'crit';
+      case 'eventloop_ms': return value<50 ? 'ok' : value<200 ? 'warn' : 'crit';
+      case 'http_errors':  return value===0 ? 'ok' : value<=10 ? 'warn' : 'crit';
+      case 'fds':          return value<500 ? 'ok' : value<900 ? 'warn' : 'crit';
+      case 'wlan_dbm':     return value>-60 ? 'ok' : value>-75 ? 'warn' : 'crit';
+    }
+    return null;
+  };
   const h=status.host||{};
   const hostMetrics=[];
   if(h.hostname) hostMetrics.push({label:'Host', value:`${h.hostname} (${h.platform})`});
-  if(h.loadAvg) hostMetrics.push({label:'CPU-Last', value:`${h.loadPercent}% (${h.loadAvg.map(v=>v.toFixed(2)).join(' / ')}) · ${h.cpuCount} Kerne`});
-  if(h.memTotal) hostMetrics.push({label:'RAM', value:`${formatBytes(h.memUsed)} / ${formatBytes(h.memTotal)} (${h.memPercent}%)`});
-  if(h.cpuTemp!=null) hostMetrics.push({label:'CPU-Temp', value:`${h.cpuTemp.toFixed(1)} °C`});
-  if(h.disk) hostMetrics.push({label:'Disk', value:`${formatBytes(h.disk.used)} / ${formatBytes(h.disk.total)} (${h.disk.percent}%)`});
+  if(h.loadAvg) hostMetrics.push({label:'CPU-Last', value:`${h.loadPercent}% (${h.loadAvg.map(v=>v.toFixed(2)).join(' / ')}) · ${h.cpuCount} Kerne`, status:classify('percent_load', h.loadPercent)});
+  if(h.memTotal) hostMetrics.push({label:'RAM', value:`${formatBytes(h.memUsed)} / ${formatBytes(h.memTotal)} (${h.memPercent}%)`, status:classify('percent_ram', h.memPercent)});
+  if(h.cpuTemp!=null) hostMetrics.push({label:'CPU-Temp', value:`${h.cpuTemp.toFixed(1)} °C`, status:classify('temp', h.cpuTemp)});
+  if(h.disk) hostMetrics.push({label:'Disk', value:`${formatBytes(h.disk.used)} / ${formatBytes(h.disk.total)} (${h.disk.percent}%)`, status:classify('percent_disk', h.disk.percent)});
   if(h.throttling){
     const t=h.throttling;
     const flags=[];
@@ -2561,25 +2585,26 @@ async function adminSystemLoad(){
     if(t.armFreqCappedEver) everFlags.push('CPU-Cap');
     if(t.throttledEver)     everFlags.push('Throttling');
     if(t.tempLimitEver)     everFlags.push('Temp-Limit');
-    let v = t.ok ? '✅ OK' : `⚠ ${flags.join(', ')||'siehe Historie'}`;
+    let v = t.ok ? 'OK' : flags.join(', ')||'aktiv';
     if(everFlags.length) v += ` · seit Boot: ${everFlags.join(', ')}`;
-    hostMetrics.push({label:'Pi-Throttling', value:v});
+    hostMetrics.push({label:'Pi-Throttling', value:v, status:classify('throttling', t)});
   }
-  if(h.dbSize!=null) hostMetrics.push({label:'DB-Größe', value:formatBytes(h.dbSize)});
+  if(h.dbSize!=null) hostMetrics.push({label:'DB-Größe', value:formatBytes(h.dbSize), status:classify('db_mb', h.dbSize/1024**2)});
   if(h.nodeProcess){
     const n=h.nodeProcess;
-    hostMetrics.push({label:'Node Heap', value:`${formatBytes(n.heapUsed)} / ${formatBytes(n.heapTotal)} · RSS ${formatBytes(n.rss)}`});
+    const heapPct = Math.round((n.heapUsed / n.heapTotal) * 100);
+    hostMetrics.push({label:'Node Heap', value:`${formatBytes(n.heapUsed)} / ${formatBytes(n.heapTotal)} (${heapPct}%) · RSS ${formatBytes(n.rss)}`, status:classify('heap_percent', heapPct)});
   }
   if(h.eventLoop){
     const e=h.eventLoop;
-    hostMetrics.push({label:'Event-Loop-Lag', value:`p50 ${e.p50}ms · p95 ${e.p95}ms · p99 ${e.p99}ms · max ${e.max}ms`});
+    hostMetrics.push({label:'Event-Loop-Lag', value:`p50 ${e.p50}ms · p95 ${e.p95}ms · p99 ${e.p99}ms · max ${e.max}ms`, status:classify('eventloop_ms', e.p95)});
   }
   if(h.httpErrors){
     const e=h.httpErrors;
-    const v = e.last60s===0 ? '✅ keine' : `⚠ ${e.last60s} (4xx: ${e.errors4xx} · 5xx: ${e.errors5xx})`;
-    hostMetrics.push({label:'HTTP-Fehler (60s)', value:v});
+    const v = e.last60s===0 ? 'keine' : `${e.last60s} (4xx: ${e.errors4xx} · 5xx: ${e.errors5xx})`;
+    hostMetrics.push({label:'HTTP-Fehler (60s)', value:v, status:classify('http_errors', e.last60s)});
   }
-  if(h.openFds!=null) hostMetrics.push({label:'Open FDs', value:h.openFds});
+  if(h.openFds!=null) hostMetrics.push({label:'Open FDs', value:h.openFds, status:classify('fds', h.openFds)});
   if(h.network && h.network.ratesPerSec){
     Object.entries(h.network.ratesPerSec).forEach(([iface,r])=>{
       hostMetrics.push({label:`Netz ${iface}`, value:`↓ ${formatRate(r.rxBps)} · ↑ ${formatRate(r.txBps)}`});
@@ -2587,7 +2612,7 @@ async function adminSystemLoad(){
   }
   if(h.wlanStations && h.wlanStations.length){
     h.wlanStations.forEach(s=>{
-      hostMetrics.push({label:`WLAN ${s.mac}`, value:`${s.signalDbm} dBm · RX ${s.rxMbps||'?'} Mbps · TX ${s.txMbps||'?'} Mbps`});
+      hostMetrics.push({label:`WLAN ${s.mac}`, value:`${s.signalDbm} dBm · RX ${s.rxMbps||'?'} Mbps · TX ${s.txMbps||'?'} Mbps`, status:classify('wlan_dbm', s.signalDbm)});
     });
   }
 
@@ -2640,7 +2665,8 @@ async function adminSystemLoad(){
     item.style.justifyContent='space-between';
     item.style.padding='8px 0';
     item.style.borderBottom='1px solid rgba(0,0,0,.05)';
-    item.innerHTML=`<span class="muted">${m.label}:</span><strong>${m.value}</strong>`;
+    const dot = m.status ? `<span class="ampel-dot ampel-${m.status}" title="${m.status==='ok'?'OK':m.status==='warn'?'Warnung':'Kritisch'}"></span>` : '';
+    item.innerHTML=`<span class="muted">${m.label}:</span><strong>${dot}${m.value}</strong>`;
     statusDiv.appendChild(item);
   });
 

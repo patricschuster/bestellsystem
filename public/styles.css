@@ -65,6 +65,19 @@ header .right button{position:relative}
 
 .view{padding:16px}
 
+/* Ampel-Dots fuer System-Metriken */
+.ampel-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;vertical-align:middle;box-shadow:0 0 0 1px rgba(0,0,0,.08)}
+.ampel-ok{background:#16a34a}
+.ampel-warn{background:#f59e0b}
+.ampel-crit{background:#dc2626;animation:ampel-pulse 1.4s ease-in-out infinite}
+@keyframes ampel-pulse{0%,100%{box-shadow:0 0 0 1px rgba(220,38,38,.4)}50%{box-shadow:0 0 0 5px rgba(220,38,38,.1)}}
+
+/* Threshold-Tabelle im Modal */
+.threshold-table{width:100%;border-collapse:collapse;font-size:14px}
+.threshold-table th,.threshold-table td{padding:8px 10px;text-align:left;border-bottom:1px solid #eee}
+.threshold-table th{font-weight:700;background:#fafafa}
+.threshold-table tr:hover td{background:#fafafa}
+
 /* iOS PWA: Theke füllt Viewport unter Header */
 #view-theke{
   padding:0 10px;
