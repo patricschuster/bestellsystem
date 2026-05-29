@@ -1,4 +1,4 @@
-// server.js (2.9.7 + WebSocket + Security)
+// server.js (2.9.8 + WebSocket + Security)
 import express from 'express';
 import http from 'http';
 import https from 'https';
@@ -178,7 +178,7 @@ function writeConfigEntry(key,val){
   db.prepare('INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(val));
 }
 
-app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.9.7', time:new Date().toISOString() }));
+app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.9.8', time:new Date().toISOString() }));
 
 // Config
 app.get('/api/config', (_req,res)=> res.json(readConfigMap()));
@@ -1069,9 +1069,9 @@ function getOrderWithItems(orderId) {
 // =============================================================================
 
 httpServer.listen(PORT, () => {
-  console.log(`Bestellsystem v2.9.7 on http://localhost:${PORT}`);
+  console.log(`Bestellsystem v2.9.8 on http://localhost:${PORT}`);
   console.log(`WebSocket server ready`);
-  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.9.7' });
+  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.9.8' });
 });
 
 // HTTPS Server (mit selbstsigniertem Zertifikat)

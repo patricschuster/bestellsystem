@@ -1,0 +1,21 @@
+# Pi-spezifische Overrides
+# Auf dem Pi starten mit:
+#   docker compose -f docker-compose.yml -f docker-compose.pi.yml up --build -d --remove-orphans
+#
+# Oder dauerhaft aktivieren:
+#   cp docker-compose.pi.yml docker-compose.override.yml
+#
+# Aktiviert:
+#  - vcgencmd-Binary vom Host gemountet (fuer Pi-Throttling-Status)
+#  - /dev/vchiq Device fuer vcgencmd-IPC mit dem Pi-Firmware
+#  - network_mode: host  -> Container sieht eth0/wlan0 direkt
+#    (Ports werden 1:1 vom Host genutzt, kein Port-Mapping noetig)
+services:
+  thekenflow:
+    network_mode: host
+    volumes:
+      - ./data:/app/data
+      - ./certs:/app/certs
+      - /usr/bin/vcgencmd:/usr/bin/vcgencmd:ro
+    devices:
+      - /dev/vchiq:/dev/vchiq
