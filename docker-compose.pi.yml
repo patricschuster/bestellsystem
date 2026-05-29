@@ -7,7 +7,7 @@
 #
 # Aktiviert:
 #  - vcgencmd-Binary vom Host gemountet (fuer Pi-Throttling-Status)
-#  - /dev/vchiq Device fuer vcgencmd-IPC mit dem Pi-Firmware
+#  - /dev/vcio Device fuer Mailbox-IPC mit dem Pi-Firmware (Pi 5 / aktuelle Kernel)
 #  - network_mode: host  -> Container sieht eth0/wlan0 direkt
 #    (Ports werden 1:1 vom Host genutzt, kein Port-Mapping noetig)
 services:
@@ -18,4 +18,4 @@ services:
       - ./certs:/app/certs
       - /usr/bin/vcgencmd:/usr/bin/vcgencmd:ro
     devices:
-      - /dev/vchiq:/dev/vchiq
+      - /dev/vcio:/dev/vcio
