@@ -1,9 +1,9 @@
-// app.js (v2.9.6 + POS)
+// app.js (v2.9.7 + POS)
 const $  = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
 const on = (sel,evt,fn)=>{ const el=(typeof sel==='string')?$(sel):sel; if(el) el.addEventListener(evt,fn); };
 
-const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.9.6', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
+const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.9.7', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
 
 // iOS PWA: Pinch-Zoom (Multi-Touch) komplett blocken (Safari Gesture Events)
 document.addEventListener('gesturestart', (e) => e.preventDefault());
@@ -2531,11 +2531,16 @@ async function adminSystemLoad(){
   const secs=uptime%60;
   const uptimeStr=`${hours}h ${mins}m ${secs}s`;
 
-  // Format Host-Metriken (CPU/RAM/Temp)
+  // Format Host-Metriken (CPU/RAM/Temp/Disk/Pi-Throttling/Node/EventLoop/HTTP/Network/WLAN)
   const formatBytes=(b)=>{
     if(b>=1024**3) return (b/1024**3).toFixed(2)+' GB';
     if(b>=1024**2) return (b/1024**2).toFixed(1)+' MB';
     return Math.round(b/1024)+' KB';
+  };
+  const formatRate=(bps)=>{
+    if(bps>=1024**2) return (bps/1024**2).toFixed(2)+' MB/s';
+    if(bps>=1024)    return (bps/1024).toFixed(1)+' KB/s';
+    return bps+' B/s';
   };
   const h=status.host||{};
   const hostMetrics=[];
@@ -2543,6 +2548,48 @@ async function adminSystemLoad(){
   if(h.loadAvg) hostMetrics.push({label:'CPU-Last', value:`${h.loadPercent}% (${h.loadAvg.map(v=>v.toFixed(2)).join(' / ')}) · ${h.cpuCount} Kerne`});
   if(h.memTotal) hostMetrics.push({label:'RAM', value:`${formatBytes(h.memUsed)} / ${formatBytes(h.memTotal)} (${h.memPercent}%)`});
   if(h.cpuTemp!=null) hostMetrics.push({label:'CPU-Temp', value:`${h.cpuTemp.toFixed(1)} °C`});
+  if(h.disk) hostMetrics.push({label:'Disk', value:`${formatBytes(h.disk.used)} / ${formatBytes(h.disk.total)} (${h.disk.percent}%)`});
+  if(h.throttling){
+    const t=h.throttling;
+    const flags=[];
+    if(t.undervoltageNow)   flags.push('Unterspannung');
+    if(t.armFreqCappedNow)  flags.push('CPU-Cap aktiv');
+    if(t.throttledNow)      flags.push('Throttling aktiv');
+    if(t.tempLimitNow)      flags.push('Temp-Limit aktiv');
+    const everFlags=[];
+    if(t.undervoltageEver)  everFlags.push('Unterspannung');
+    if(t.armFreqCappedEver) everFlags.push('CPU-Cap');
+    if(t.throttledEver)     everFlags.push('Throttling');
+    if(t.tempLimitEver)     everFlags.push('Temp-Limit');
+    let v = t.ok ? '✅ OK' : `⚠ ${flags.join(', ')||'siehe Historie'}`;
+    if(everFlags.length) v += ` · seit Boot: ${everFlags.join(', ')}`;
+    hostMetrics.push({label:'Pi-Throttling', value:v});
+  }
+  if(h.dbSize!=null) hostMetrics.push({label:'DB-Größe', value:formatBytes(h.dbSize)});
+  if(h.nodeProcess){
+    const n=h.nodeProcess;
+    hostMetrics.push({label:'Node Heap', value:`${formatBytes(n.heapUsed)} / ${formatBytes(n.heapTotal)} · RSS ${formatBytes(n.rss)}`});
+  }
+  if(h.eventLoop){
+    const e=h.eventLoop;
+    hostMetrics.push({label:'Event-Loop-Lag', value:`p50 ${e.p50}ms · p95 ${e.p95}ms · p99 ${e.p99}ms · max ${e.max}ms`});
+  }
+  if(h.httpErrors){
+    const e=h.httpErrors;
+    const v = e.last60s===0 ? '✅ keine' : `⚠ ${e.last60s} (4xx: ${e.errors4xx} · 5xx: ${e.errors5xx})`;
+    hostMetrics.push({label:'HTTP-Fehler (60s)', value:v});
+  }
+  if(h.openFds!=null) hostMetrics.push({label:'Open FDs', value:h.openFds});
+  if(h.network && h.network.ratesPerSec){
+    Object.entries(h.network.ratesPerSec).forEach(([iface,r])=>{
+      hostMetrics.push({label:`Netz ${iface}`, value:`↓ ${formatRate(r.rxBps)} · ↑ ${formatRate(r.txBps)}`});
+    });
+  }
+  if(h.wlanStations && h.wlanStations.length){
+    h.wlanStations.forEach(s=>{
+      hostMetrics.push({label:`WLAN ${s.mac}`, value:`${s.signalDbm} dBm · RX ${s.rxMbps||'?'} Mbps · TX ${s.txMbps||'?'} Mbps`});
+    });
+  }
 
   // Render status metrics
   const metrics=[

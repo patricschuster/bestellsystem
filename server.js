@@ -1,4 +1,4 @@
-// server.js (2.9.6 + WebSocket + Security)
+// server.js (2.9.7 + WebSocket + Security)
 import express from 'express';
 import http from 'http';
 import https from 'https';
@@ -12,7 +12,23 @@ import helmet from 'helmet';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
+import { execSync } from 'child_process';
+import { monitorEventLoopDelay } from 'perf_hooks';
 import { db, ensureInitialized } from './src/db.js';
+
+// Event-Loop-Delay-Monitor (perf_hooks)
+const eventLoopMonitor = monitorEventLoopDelay({ resolution: 20 });
+eventLoopMonitor.enable();
+
+// HTTP-Fehler Rolling-Window (letzte 60s)
+const httpErrors = [];
+function pruneHttpErrors(){
+  const cutoff = Date.now() - 60_000;
+  while(httpErrors.length && httpErrors[0].ts < cutoff) httpErrors.shift();
+}
+
+// Netzwerk-Throughput: vorheriger /proc/net/dev Snapshot fuer Delta-Berechnung
+let prevNetSnapshot = null;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -54,11 +70,15 @@ const apiLimiter = rateLimit({
 app.use('/api/auth/login', loginLimiter);
 app.use('/api/', apiLimiter);
 
-// Logging middleware
+// Logging middleware + HTTP-Fehler-Counter
 app.use((req, res, next) => {
   const start = Date.now();
   res.on('finish', () => {
     const duration = Date.now() - start;
+    if (res.statusCode >= 400) {
+      httpErrors.push({ ts: Date.now(), code: res.statusCode, path: req.path });
+      pruneHttpErrors();
+    }
     if (req.method !== 'GET' || req.path.startsWith('/api/system')) {
       log('info', 'api', `${req.method} ${req.path}`, { status: res.statusCode, duration: `${duration}ms` });
     }
@@ -158,7 +178,7 @@ function writeConfigEntry(key,val){
   db.prepare('INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(val));
 }
 
-app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.9.6', time:new Date().toISOString() }));
+app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.9.7', time:new Date().toISOString() }));
 
 // Config
 app.get('/api/config', (_req,res)=> res.json(readConfigMap()));
@@ -394,6 +414,119 @@ app.get('/api/system/logs', (_req,res)=>{
   res.json(systemLog.slice().reverse()); // Newest first
 });
 
+// === System-Monitoring-Helfer ===
+
+function safeRead(fn, fallback=null){ try { return fn(); } catch { return fallback; } }
+
+function getDiskSpace(){
+  return safeRead(()=>{
+    const st = fs.statfsSync('/');
+    const total = st.bsize * st.blocks;
+    const free  = st.bsize * st.bavail;
+    const used  = total - free;
+    return { total, free, used, percent: Math.round((used/total)*100) };
+  });
+}
+
+function getPiThrottling(){
+  return safeRead(()=>{
+    const out = execSync('vcgencmd get_throttled', { timeout: 1000, stdio: ['ignore','pipe','ignore'] }).toString();
+    const hex = out.split('=')[1].trim();
+    const val = parseInt(hex, 16);
+    return {
+      raw: hex,
+      undervoltageNow:   !!(val & 0x1),
+      armFreqCappedNow:  !!(val & 0x2),
+      throttledNow:      !!(val & 0x4),
+      tempLimitNow:      !!(val & 0x8),
+      undervoltageEver:  !!(val & 0x10000),
+      armFreqCappedEver: !!(val & 0x20000),
+      throttledEver:     !!(val & 0x40000),
+      tempLimitEver:     !!(val & 0x80000),
+      ok: val === 0
+    };
+  });
+}
+
+function getDbSize(){
+  return safeRead(()=> fs.statSync(path.join(__dirname,'data','bestellsystem.db')).size);
+}
+
+function getNodeProcess(){
+  const m = process.memoryUsage();
+  return { rss:m.rss, heapUsed:m.heapUsed, heapTotal:m.heapTotal, external:m.external };
+}
+
+function getEventLoopLag(){
+  return {
+    p50: +(eventLoopMonitor.percentile(50)/1e6).toFixed(2),
+    p95: +(eventLoopMonitor.percentile(95)/1e6).toFixed(2),
+    p99: +(eventLoopMonitor.percentile(99)/1e6).toFixed(2),
+    max: +(eventLoopMonitor.max/1e6).toFixed(2),
+    mean:+(eventLoopMonitor.mean/1e6).toFixed(2)
+  };
+}
+
+function getHttpErrorRate(){
+  pruneHttpErrors();
+  const e4 = httpErrors.filter(e=>e.code>=400 && e.code<500).length;
+  const e5 = httpErrors.filter(e=>e.code>=500).length;
+  return { last60s: httpErrors.length, errors4xx:e4, errors5xx:e5 };
+}
+
+function getOpenFds(){
+  return safeRead(()=> fs.readdirSync('/proc/self/fd').length);
+}
+
+function getNetThroughput(){
+  return safeRead(()=>{
+    const data = fs.readFileSync('/proc/net/dev', 'utf8');
+    const lines = data.split('\n').slice(2);
+    const snap = {};
+    for(const line of lines){
+      const m = line.trim().match(/^(\S+):\s+(.+)$/);
+      if(!m) continue;
+      const name = m[1];
+      if(name==='lo' || /^(br-|veth|docker)/.test(name)) continue;
+      const vals = m[2].split(/\s+/).map(Number);
+      snap[name] = { rxBytes: vals[0], txBytes: vals[8] };
+    }
+    const now = Date.now();
+    const rates = {};
+    if(prevNetSnapshot){
+      const dt = (now - prevNetSnapshot.ts) / 1000;
+      if(dt > 0){
+        for(const name of Object.keys(snap)){
+          const prev = prevNetSnapshot.iface[name];
+          if(prev){
+            rates[name] = {
+              rxBps: Math.round((snap[name].rxBytes - prev.rxBytes) / dt),
+              txBps: Math.round((snap[name].txBytes - prev.txBytes) / dt)
+            };
+          }
+        }
+      }
+    }
+    prevNetSnapshot = { ts: now, iface: snap };
+    return { totals: snap, ratesPerSec: rates };
+  });
+}
+
+function getWlanStations(){
+  return safeRead(()=>{
+    const out = execSync('iw dev wlan0 station dump', { timeout: 1000, stdio: ['ignore','pipe','ignore'] }).toString();
+    const blocks = out.split(/\n(?=Station)/);
+    return blocks.map(b=>{
+      const mac    = (b.match(/Station ([\w:]+)/) || [])[1];
+      const signal = parseInt((b.match(/signal:\s+(-?\d+)/) || [])[1]);
+      const rxBr   = parseFloat((b.match(/rx bitrate:\s+([\d.]+)/) || [])[1]);
+      const txBr   = parseFloat((b.match(/tx bitrate:\s+([\d.]+)/) || [])[1]);
+      const inact  = parseInt((b.match(/inactive time:\s+(\d+)/) || [])[1]);
+      return { mac, signalDbm:signal, rxMbps:rxBr, txMbps:txBr, inactiveMs:inact };
+    }).filter(s=>s.mac);
+  });
+}
+
 function getHostStats(){
   const cpuCount = os.cpus().length;
   const load = os.loadavg(); // [1m, 5m, 15m]
@@ -402,7 +535,7 @@ function getHostStats(){
   let cpuTemp = null;
   try {
     const raw = fs.readFileSync('/sys/class/thermal/thermal_zone0/temp', 'utf8').trim();
-    cpuTemp = parseInt(raw, 10) / 1000; // millicelsius -> celsius
+    cpuTemp = parseInt(raw, 10) / 1000;
   } catch { /* not a Pi or no thermal zone */ }
   return {
     cpuCount,
@@ -414,6 +547,15 @@ function getHostStats(){
     cpuTemp,
     platform: os.platform(),
     hostname: os.hostname(),
+    disk:        getDiskSpace(),
+    throttling:  getPiThrottling(),
+    dbSize:      getDbSize(),
+    nodeProcess: getNodeProcess(),
+    eventLoop:   getEventLoopLag(),
+    httpErrors:  getHttpErrorRate(),
+    openFds:     getOpenFds(),
+    network:     getNetThroughput(),
+    wlanStations:getWlanStations(),
   };
 }
 
@@ -927,9 +1069,9 @@ function getOrderWithItems(orderId) {
 // =============================================================================
 
 httpServer.listen(PORT, () => {
-  console.log(`Bestellsystem v2.9.6 on http://localhost:${PORT}`);
+  console.log(`Bestellsystem v2.9.7 on http://localhost:${PORT}`);
   console.log(`WebSocket server ready`);
-  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.9.6' });
+  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.9.7' });
 });
 
 // HTTPS Server (mit selbstsigniertem Zertifikat)
