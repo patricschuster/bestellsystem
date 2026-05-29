@@ -392,6 +392,8 @@ textarea{resize:vertical;min-height:80px}
 .admin-section .admin-card{background:#fff;border:1px solid #eee;border-radius:14px;box-shadow:0 6px 16px rgba(0,0,0,.06);padding:12px;margin-bottom:12px}
 .admin-row{display:grid;grid-template-columns:1fr;gap:12px}
 @media (min-width:900px){.admin-row{grid-template-columns:1fr 1fr}}
+.admin-row > *{min-width:0}
+#system-logs{word-break:break-word;overflow-wrap:anywhere}
 .inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .prod-table, .rep-table{width:100%;border-collapse:collapse}
 .prod-table th, .prod-table td, .rep-table th, .rep-table td{border-bottom:1px solid #eee;padding:8px;text-align:left}
