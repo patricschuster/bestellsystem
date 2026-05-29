@@ -65,6 +65,23 @@ header .right button{position:relative}
 
 .view{padding:16px}
 
+/* Simulator: Konfig-Form Layout */
+.sim-form{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.sim-form label{display:flex;flex-direction:column;font-size:13px;color:var(--muted);gap:4px}
+.sim-form input{font-size:14px}
+.sim-form .inline-pair{display:flex;gap:6px}
+.sim-form .inline-pair input{flex:1}
+.sim-form .sim-check{flex-direction:row;align-items:center;gap:8px;font-size:14px;color:var(--fg)}
+.sim-form .sim-check input{width:auto;min-height:auto}
+
+/* SIM-Markierung in Bestell-Listen / Theken-Karten */
+.sim-order, [data-waiter^="SIM_"]{position:relative}
+.sim-order::after, [data-waiter^="SIM_"]::after{content:"SIM";position:absolute;top:8px;right:8px;background:#f59e0b;color:#fff;font-size:10px;font-weight:800;padding:2px 6px;border-radius:4px;pointer-events:none;letter-spacing:.5px;z-index:5}
+
+/* Status-Panel */
+#sim-status .stat-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(0,0,0,.05);font-size:14px}
+#sim-status .stat-row strong{font-feature-settings:"tnum"}
+
 /* Ampel-Dots fuer System-Metriken */
 .ampel-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;vertical-align:middle;box-shadow:0 0 0 1px rgba(0,0,0,.08)}
 .ampel-ok{background:#16a34a}

@@ -198,6 +198,7 @@
     <button class="tab" data-tab="stations">Stationen</button>
     <button class="tab" data-tab="report">Auswertung</button>
     <button class="tab" data-tab="system">System</button>
+    <button class="tab" data-tab="simulator">Simulator</button>
   </div>
   <section id="admin-tables" class="admin-section">
     <div class="admin-row">
@@ -307,6 +308,39 @@
     <div class="admin-card">
       <h3>Verbundene Clients</h3>
       <div id="system-clients"></div>
+    </div>
+  </section>
+  <section id="admin-simulator" class="admin-section hidden">
+    <div class="admin-card" style="border-left:4px solid #f59e0b;">
+      <h3 style="margin-top:0;">⚠ Achtung — Last-/Workflow-Simulator</h3>
+      <p class="muted small">Erzeugt virtuelle Bediener (Prefix <code>SIM_</code>), die Bestellungen aufgeben. Die Theke quittiert automatisch und es wird kassiert. <strong>Nicht waehrend echter Veranstaltung starten!</strong> Cleanup loescht <strong>alle</strong> SIM_-Eintraege.</p>
+    </div>
+    <div class="admin-row">
+      <div class="admin-card">
+        <h3>Konfiguration</h3>
+        <div class="sim-form">
+          <label>Bediener-Anzahl <input id="sim-waiters" type="number" min="1" max="50" value="5"/></label>
+          <label>Test-Dauer (Min, 0=endlos) <input id="sim-duration" type="number" min="0" max="180" value="5"/></label>
+          <label>Order-Intervall min/max (s) <span class="inline-pair"><input id="sim-int-min" type="number" min="1" value="20"/> <input id="sim-int-max" type="number" min="2" value="60"/></span></label>
+          <label>Items pro Order min/max <span class="inline-pair"><input id="sim-items-min" type="number" min="1" value="1"/> <input id="sim-items-max" type="number" min="1" value="6"/></span></label>
+          <label>Theke-Reaktion ready (s) <span class="inline-pair"><input id="sim-theke-min" type="number" min="1" value="15"/> <input id="sim-theke-max" type="number" min="2" value="45"/></span></label>
+          <label>Pickup-Zeit (s) <span class="inline-pair"><input id="sim-pick-min" type="number" min="1" value="5"/> <input id="sim-pick-max" type="number" min="2" value="20"/></span></label>
+          <label>Zahl-Mix (Voll % / Teil %) <span class="inline-pair"><input id="sim-pay-full" type="number" min="0" max="100" value="60"/> <input id="sim-pay-partial" type="number" min="0" max="100" value="30"/></span></label>
+          <label>Storno-Rate (%) <input id="sim-cancel" type="number" min="0" max="50" value="5"/></label>
+          <label>POS-Anteil (%) <input id="sim-pos" type="number" min="0" max="100" value="10"/></label>
+          <label class="sim-check"><input id="sim-browser-mode" type="checkbox"/> Zusaetzlich Browser-Last (HTTP-Stack testen)</label>
+          <label>Browser-Clients <input id="sim-browser-count" type="number" min="1" max="20" value="3"/></label>
+        </div>
+        <div class="inline" style="margin-top:14px;">
+          <button id="btn-sim-start" class="primary">▶ Start</button>
+          <button id="btn-sim-stop" class="outline" disabled>■ Stop</button>
+          <button id="btn-sim-cleanup" class="ghost" style="margin-left:auto;color:#dc2626;">⌫ Cleanup (alle SIM_ entfernen)</button>
+        </div>
+      </div>
+      <div class="admin-card">
+        <h3>Status <span id="sim-running-badge" class="hidden" style="background:#16a34a;color:#fff;padding:2px 10px;border-radius:999px;font-size:12px;margin-left:8px;">LAUFT</span></h3>
+        <div id="sim-status"></div>
+      </div>
     </div>
   </section>
 </main>

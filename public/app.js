@@ -1,9 +1,9 @@
-// app.js (v2.9.9 + POS)
+// app.js (v2.10.0 + POS + Simulator)
 const $  = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
 const on = (sel,evt,fn)=>{ const el=(typeof sel==='string')?$(sel):sel; if(el) el.addEventListener(evt,fn); };
 
-const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.9.9', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
+const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.10.0', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
 
 // iOS PWA: Pinch-Zoom (Multi-Touch) komplett blocken (Safari Gesture Events)
 document.addEventListener('gesturestart', (e) => e.preventDefault());
@@ -1738,6 +1738,7 @@ function getRenderableBatches(orders){
 function buildBatchCard(o, batch, batchItems){
   const card=document.createElement('div');
   card.className='order-card';
+  if(o.waiter && o.waiter.startsWith('SIM_')) card.dataset.waiter = o.waiter;
   const layout=(state.config.theke_layout||'badges');
   const row=document.createElement('div');
   row.className='row';
@@ -2364,7 +2365,7 @@ function renderWaiterHistory(){
 }
 
 /* Admin */
-async function adminInit(){ $$('.admin-tabs .tab').forEach(btn=>on(btn,'click',()=>{ $$('.admin-tabs .tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); const tab=btn.dataset.tab; $$('.admin-section').forEach(s=>s.classList.add('hidden')); if(tab==='tables'){ $('#admin-tables').classList.remove('hidden'); adminTablesLoad(); } if(tab==='products'){ $('#admin-products').classList.remove('hidden'); adminProductsLoad(); } if(tab==='stations'){ $('#admin-stations').classList.remove('hidden'); adminStationsLoad(); } if(tab==='report'){ $('#admin-report').classList.remove('hidden'); adminReportLoad(); } if(tab==='system'){ $('#admin-system').classList.remove('hidden'); adminSystemLoad(); } })); adminTablesLoad(); on('#btn-save-cols','click', adminSaveCols); on('#btn-save-theke-layout','click', adminSaveThekeLayout); on('#btn-apply-tables','click', adminApplyTables); on('#btn-add-product','click', adminAddProduct); on('#btn-add-station','click', adminAddStation); on('#btn-refresh-report','click', adminReportLoad); on('#btn-reset-report','click', adminResetReport); on('#btn-refresh-logs','click', adminSystemLoad); on('#btn-save-pin-bar','click', adminSavePinBar); on('#btn-save-pin-admin','click', adminSavePinAdmin); }
+async function adminInit(){ $$('.admin-tabs .tab').forEach(btn=>on(btn,'click',()=>{ $$('.admin-tabs .tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); const tab=btn.dataset.tab; $$('.admin-section').forEach(s=>s.classList.add('hidden')); if(tab==='tables'){ $('#admin-tables').classList.remove('hidden'); adminTablesLoad(); } if(tab==='products'){ $('#admin-products').classList.remove('hidden'); adminProductsLoad(); } if(tab==='stations'){ $('#admin-stations').classList.remove('hidden'); adminStationsLoad(); } if(tab==='report'){ $('#admin-report').classList.remove('hidden'); adminReportLoad(); } if(tab==='system'){ $('#admin-system').classList.remove('hidden'); adminSystemLoad(); } if(tab==='simulator'){ $('#admin-simulator').classList.remove('hidden'); adminSimulatorOpen(); } else { adminSimulatorClose(); } })); adminTablesLoad(); on('#btn-save-cols','click', adminSaveCols); on('#btn-save-theke-layout','click', adminSaveThekeLayout); on('#btn-apply-tables','click', adminApplyTables); on('#btn-add-product','click', adminAddProduct); on('#btn-add-station','click', adminAddStation); on('#btn-refresh-report','click', adminReportLoad); on('#btn-reset-report','click', adminResetReport); on('#btn-refresh-logs','click', adminSystemLoad); on('#btn-save-pin-bar','click', adminSavePinBar); on('#btn-save-pin-admin','click', adminSavePinAdmin); on('#btn-sim-start','click', simStart); on('#btn-sim-stop','click', simStop); on('#btn-sim-cleanup','click', simCleanup); }
 async function adminTablesLoad(){ state.config=await api('/api/config'); $('#cfg-cols').value=state.config.grid_cols??4; $('#cfg-theke-layout').value=(state.config.theke_layout??'badges'); const tables=await api('/api/tables'); $('#tbl-count').textContent=tables.length; $('#tbl-target').value=tables.length; const prev=$('#admin-tables-preview'); prev.innerHTML=''; prev.style.setProperty('--cols', Math.max(3, Math.min(6, +($('#cfg-cols').value||4)))); tables.forEach((t,i)=>{ const b=document.createElement('button'); b.className='table-btn'; b.textContent=i+1; prev.appendChild(b); }); }
 async function adminSaveCols(){ const n=Math.max(3,Math.min(6,+($('#cfg-cols').value||4))); await api('/api/config',{method:'PUT', body:JSON.stringify({grid_cols:n})}); state.config.grid_cols=n; await adminTablesLoad(); }
 async function adminSaveThekeLayout(){ const v=$('#cfg-theke-layout').value||'badges'; await api('/api/config',{method:'PUT', body:JSON.stringify({theke_layout:v})}); state.config.theke_layout=v; await adminTablesLoad(); }
@@ -2510,6 +2511,143 @@ async function adminSavePinAdmin() {
   } catch (e) {
     alert('Fehler beim Ändern der PIN: ' + e.message);
   }
+}
+
+// === Simulator-Steuerung (Admin-Tab) ===
+const simBrowser = { active:false, loops:[], idCounter:0 };
+let simPollTimer = null;
+
+function simReadConfig(){
+  return {
+    waiters:          +$('#sim-waiters').value || 5,
+    durationMin:      +$('#sim-duration').value || 0,
+    orderIntervalMin: +$('#sim-int-min').value || 20,
+    orderIntervalMax: +$('#sim-int-max').value || 60,
+    itemsMin:         +$('#sim-items-min').value || 1,
+    itemsMax:         +$('#sim-items-max').value || 6,
+    thekeMin:         +$('#sim-theke-min').value || 15,
+    thekeMax:         +$('#sim-theke-max').value || 45,
+    pickupMin:        +$('#sim-pick-min').value || 5,
+    pickupMax:        +$('#sim-pick-max').value || 20,
+    payFull:          +$('#sim-pay-full').value || 60,
+    payPartial:       +$('#sim-pay-partial').value || 30,
+    cancelRate:       +$('#sim-cancel').value || 5,
+    posRatio:         +$('#sim-pos').value || 0,
+  };
+}
+
+async function simStart(){
+  const cfg = simReadConfig();
+  if(cfg.orderIntervalMin >= cfg.orderIntervalMax) return alert('Order-Intervall: min muss < max sein');
+  if(cfg.itemsMin > cfg.itemsMax) return alert('Items pro Order: min > max');
+  if(cfg.payFull + cfg.payPartial > 100) return alert('Zahl-Mix: voll + teil > 100%');
+  try {
+    await api('/api/simulator/start', { method:'POST', body: JSON.stringify(cfg) });
+    if($('#sim-browser-mode').checked) simBrowserStart(cfg, +$('#sim-browser-count').value||3);
+    $('#btn-sim-start').disabled = true;
+    $('#btn-sim-stop').disabled  = false;
+    $('#sim-running-badge').classList.remove('hidden');
+    simStartPolling();
+  } catch(e){ alert('Start fehlgeschlagen: ' + e.message); }
+}
+
+async function simStop(){
+  try { await api('/api/simulator/stop', { method:'POST' }); } catch(e){}
+  simBrowserStop();
+  $('#btn-sim-start').disabled = false;
+  $('#btn-sim-stop').disabled  = true;
+  $('#sim-running-badge').classList.add('hidden');
+  await simPollOnce();
+}
+
+async function simCleanup(){
+  if(!confirm('Alle Simulator-Orders (Prefix SIM_) wirklich loeschen?')) return;
+  try {
+    const r = await api('/api/simulator/cleanup', { method:'POST' });
+    alert(`Cleanup abgeschlossen: ${r.ordersRemoved} Orders entfernt`);
+    await simPollOnce();
+  } catch(e){ alert('Cleanup fehlgeschlagen: ' + e.message); }
+}
+
+function adminSimulatorOpen(){ simPollOnce(); simStartPolling(); }
+function adminSimulatorClose(){ if(simPollTimer){ clearInterval(simPollTimer); simPollTimer=null; } }
+
+function simStartPolling(){
+  if(simPollTimer) return;
+  simPollTimer = setInterval(simPollOnce, 1500);
+}
+
+async function simPollOnce(){
+  try {
+    const st = await api('/api/simulator/status');
+    const target = $('#sim-status');
+    if(!target) return;
+    const s = st.stats || {};
+    const mins = Math.floor(st.uptimeSec/60), secs = st.uptimeSec%60;
+    const opm = st.uptimeSec>0 ? (s.ordersCreated/(st.uptimeSec/60)).toFixed(1) : '–';
+    const rows = [
+      ['Status',            st.running ? '<span style="color:#16a34a;font-weight:700;">▶ aktiv</span>' : '<span class="muted">gestoppt</span>'],
+      ['Laufzeit',          st.running ? `${mins}m ${secs}s` : '–'],
+      ['Virtuelle Bediener',st.activeWaiters||0],
+      ['Browser-Clients',   simBrowser.active ? simBrowser.loops.length : 0],
+      ['Orders erzeugt',    `${s.ordersCreated||0}  (${opm}/min)`],
+      ['Items erzeugt',     s.itemsCreated||0],
+      ['Items ready',       s.itemsReady||0],
+      ['Items picked',      s.itemsPicked||0],
+      ['Items kassiert',    s.itemsPaid||0],
+      ['Items storniert',   s.itemsCancelled||0],
+      ['Orders kassiert',   s.ordersPaid||0],
+      ['Fehler',            (s.errors||0) > 0 ? `<span style="color:#dc2626;font-weight:700;">${s.errors}</span>` : '0'],
+    ];
+    target.innerHTML = rows.map(([k,v])=>`<div class="stat-row"><span class="muted">${k}:</span><strong>${v}</strong></div>`).join('');
+
+    // Buttons anhand State setzen
+    $('#btn-sim-start').disabled = st.running;
+    $('#btn-sim-stop').disabled  = !st.running;
+    $('#sim-running-badge').classList.toggle('hidden', !st.running);
+
+    // Auto-stop des Browser-Modus, falls Server gestoppt hat (z.B. durch durationMin-Timeout)
+    if(!st.running && simBrowser.active) simBrowserStop();
+  } catch(e){ /* still */ }
+}
+
+// === Browser-Modus (Option B): zusaetzliche HTTP-Last aus dem Admin-Tab ===
+function simBrowserStart(cfg, count){
+  simBrowser.active = true;
+  for(let i=0; i<count; i++){
+    const id = ++simBrowser.idCounter;
+    const ls = { id, active:true };
+    simBrowser.loops.push(ls);
+    simBrowserLoop(ls, cfg);
+  }
+}
+
+async function simBrowserLoop(ls, cfg){
+  // Produkte und Tische einmalig laden
+  const [products, tables] = await Promise.all([api('/api/products'), api('/api/tables')]);
+  const activeProducts = products.filter(p=>p.active);
+  const realTables = tables.filter(t=>t.name!=='POS');
+  while(ls.active && simBrowser.active){
+    try {
+      const n = Math.floor(cfg.itemsMin + Math.random()*(cfg.itemsMax-cfg.itemsMin+1));
+      const items = [];
+      for(let i=0;i<n;i++) items.push(activeProducts[Math.floor(Math.random()*activeProducts.length)].id);
+      const table = realTables[Math.floor(Math.random()*realTables.length)];
+      await api('/api/orders', { method:'POST', body: JSON.stringify({
+        table_id: table.id,
+        waiter: `SIM_Browser_${ls.id}`,
+        items
+      })});
+    } catch(e){ /* still */ }
+    const wait = (cfg.orderIntervalMin + Math.random()*(cfg.orderIntervalMax-cfg.orderIntervalMin)) * 1000;
+    await new Promise(r=>setTimeout(r, wait));
+  }
+}
+
+function simBrowserStop(){
+  simBrowser.active = false;
+  simBrowser.loops.forEach(l => { l.active = false; });
+  simBrowser.loops = [];
 }
 
 async function adminSystemLoad(){

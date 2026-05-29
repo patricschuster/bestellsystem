@@ -1,4 +1,4 @@
-// server.js (2.9.9 + WebSocket + Security)
+// server.js (2.10.0 + WebSocket + Security + Simulator)
 import express from 'express';
 import http from 'http';
 import https from 'https';
@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { execSync } from 'child_process';
 import { monitorEventLoopDelay } from 'perf_hooks';
 import { db, ensureInitialized } from './src/db.js';
+import { Simulator } from './src/simulator.js';
 
 // Event-Loop-Delay-Monitor (perf_hooks)
 const eventLoopMonitor = monitorEventLoopDelay({ resolution: 20 });
@@ -178,7 +179,7 @@ function writeConfigEntry(key,val){
   db.prepare('INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(val));
 }
 
-app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.9.9', time:new Date().toISOString() }));
+app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.10.0', time:new Date().toISOString() }));
 
 // Config
 app.get('/api/config', (_req,res)=> res.json(readConfigMap()));
@@ -588,6 +589,30 @@ app.get('/api/system/status', (_req,res)=>{
     clients: Array.from(wsClients.values()).map(c => ({ ...c })),
     timestamp: new Date().toISOString()
   });
+});
+
+// === Simulator API ===
+const simulator = new Simulator({ db, broadcast, getOrderWithItems, log });
+
+app.post('/api/simulator/start', (req,res)=>{
+  try {
+    simulator.start(req.body || {});
+    res.json({ ok:true, status: simulator.getStatus() });
+  } catch(e){ res.status(400).json({ error: e.message }); }
+});
+
+app.post('/api/simulator/stop', (_req,res)=>{
+  simulator.stop();
+  res.json({ ok:true, status: simulator.getStatus() });
+});
+
+app.post('/api/simulator/cleanup', (_req,res)=>{
+  const result = simulator.cleanup();
+  res.json({ ok:true, ...result });
+});
+
+app.get('/api/simulator/status', (_req,res)=>{
+  res.json(simulator.getStatus());
 });
 
 // Orders
@@ -1069,9 +1094,9 @@ function getOrderWithItems(orderId) {
 // =============================================================================
 
 httpServer.listen(PORT, () => {
-  console.log(`Bestellsystem v2.9.9 on http://localhost:${PORT}`);
+  console.log(`Bestellsystem v2.10.0 on http://localhost:${PORT}`);
   console.log(`WebSocket server ready`);
-  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.9.9' });
+  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.10.0' });
 });
 
 // HTTPS Server (mit selbstsigniertem Zertifikat)
