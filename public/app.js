@@ -1,9 +1,9 @@
-// app.js (v2.9.5 + POS)
+// app.js (v2.9.6 + POS)
 const $  = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
 const on = (sel,evt,fn)=>{ const el=(typeof sel==='string')?$(sel):sel; if(el) el.addEventListener(evt,fn); };
 
-const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.9.5', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
+const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.9.6', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
 
 // iOS PWA: Pinch-Zoom (Multi-Touch) komplett blocken (Safari Gesture Events)
 document.addEventListener('gesturestart', (e) => e.preventDefault());
@@ -2531,8 +2531,23 @@ async function adminSystemLoad(){
   const secs=uptime%60;
   const uptimeStr=`${hours}h ${mins}m ${secs}s`;
 
+  // Format Host-Metriken (CPU/RAM/Temp)
+  const formatBytes=(b)=>{
+    if(b>=1024**3) return (b/1024**3).toFixed(2)+' GB';
+    if(b>=1024**2) return (b/1024**2).toFixed(1)+' MB';
+    return Math.round(b/1024)+' KB';
+  };
+  const h=status.host||{};
+  const hostMetrics=[];
+  if(h.hostname) hostMetrics.push({label:'Host', value:`${h.hostname} (${h.platform})`});
+  if(h.loadAvg) hostMetrics.push({label:'CPU-Last', value:`${h.loadPercent}% (${h.loadAvg.map(v=>v.toFixed(2)).join(' / ')}) · ${h.cpuCount} Kerne`});
+  if(h.memTotal) hostMetrics.push({label:'RAM', value:`${formatBytes(h.memUsed)} / ${formatBytes(h.memTotal)} (${h.memPercent}%)`});
+  if(h.cpuTemp!=null) hostMetrics.push({label:'CPU-Temp', value:`${h.cpuTemp.toFixed(1)} °C`});
+
   // Render status metrics
   const metrics=[
+    ...hostMetrics,
+    ...(hostMetrics.length ? [{label:'', value:'', separator:true}] : []),
     {label:'Uptime', value:uptimeStr},
     {label:'Offene Bestellungen', value:status.orders.open},
     {label:'Bestellpositionen (Gesamt)', value:status.orders.itemsTotal},

@@ -1,9 +1,10 @@
-// server.js (2.9.5 + WebSocket + Security)
+// server.js (2.9.6 + WebSocket + Security)
 import express from 'express';
 import http from 'http';
 import https from 'https';
 import { WebSocketServer } from 'ws';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import morgan from 'morgan';
@@ -157,7 +158,7 @@ function writeConfigEntry(key,val){
   db.prepare('INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(val));
 }
 
-app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.9.5', time:new Date().toISOString() }));
+app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.9.6', time:new Date().toISOString() }));
 
 // Config
 app.get('/api/config', (_req,res)=> res.json(readConfigMap()));
@@ -393,6 +394,29 @@ app.get('/api/system/logs', (_req,res)=>{
   res.json(systemLog.slice().reverse()); // Newest first
 });
 
+function getHostStats(){
+  const cpuCount = os.cpus().length;
+  const load = os.loadavg(); // [1m, 5m, 15m]
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  let cpuTemp = null;
+  try {
+    const raw = fs.readFileSync('/sys/class/thermal/thermal_zone0/temp', 'utf8').trim();
+    cpuTemp = parseInt(raw, 10) / 1000; // millicelsius -> celsius
+  } catch { /* not a Pi or no thermal zone */ }
+  return {
+    cpuCount,
+    loadAvg: load,
+    loadPercent: Math.min(100, Math.round((load[0] / cpuCount) * 100)),
+    memTotal: totalMem,
+    memUsed: totalMem - freeMem,
+    memPercent: Math.round(((totalMem - freeMem) / totalMem) * 100),
+    cpuTemp,
+    platform: os.platform(),
+    hostname: os.hostname(),
+  };
+}
+
 app.get('/api/system/status', (_req,res)=>{
   const orders=db.prepare('SELECT COUNT(*) as count FROM orders WHERE status!=\'paid\'').get();
   const orderItems=db.prepare('SELECT COUNT(*) as ready, COUNT(*) as total FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE o.status!=\'paid\'').get();
@@ -401,6 +425,7 @@ app.get('/api/system/status', (_req,res)=>{
 
   res.json({
     uptime: process.uptime(),
+    host: getHostStats(),
     orders: {
       open: orders.count,
       itemsReady: orderItems.ready,
@@ -902,9 +927,9 @@ function getOrderWithItems(orderId) {
 // =============================================================================
 
 httpServer.listen(PORT, () => {
-  console.log(`Bestellsystem v2.9.5 on http://localhost:${PORT}`);
+  console.log(`Bestellsystem v2.9.6 on http://localhost:${PORT}`);
   console.log(`WebSocket server ready`);
-  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.9.5' });
+  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.9.6' });
 });
 
 // HTTPS Server (mit selbstsigniertem Zertifikat)
