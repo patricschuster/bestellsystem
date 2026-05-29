@@ -1,4 +1,4 @@
-// src/db.js (Option B seed, v2.9.4)
+// src/db.js (Option B seed, v2.9.5)
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
