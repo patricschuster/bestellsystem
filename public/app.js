@@ -1,9 +1,9 @@
-// app.js (v2.10.2 + POS + Simulator)
+// app.js (v2.10.3 + POS + Simulator)
 const $  = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
 const on = (sel,evt,fn)=>{ const el=(typeof sel==='string')?$(sel):sel; if(el) el.addEventListener(evt,fn); };
 
-const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.10.2', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
+const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.10.3', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
 
 // iOS PWA: Pinch-Zoom (Multi-Touch) komplett blocken (Safari Gesture Events)
 document.addEventListener('gesturestart', (e) => e.preventDefault());
@@ -2399,31 +2399,29 @@ async function adminProductsLoad(){ const list=await api('/api/products'); state
   tb.addEventListener('click', async (e)=>{ const del=e.target.closest('.btn-del'); if(del){ const id=+del.dataset.id; if(!confirm(`Produkt #${id} wirklich löschen?`)) return; await api(`/api/products/${id}`,{method:'DELETE'}); await adminProductsLoad(); return; } const up=e.target.closest('.btn-up'); const down=e.target.closest('.btn-down'); if(!up&&!down) return; const id=+(up?up.dataset.id:down.dataset.id); const row=tb.querySelector(`tr[data-id="${id}"]`); if(up){ const prev=row.previousElementSibling; if(prev) tb.insertBefore(row,prev); } else { const next=row.nextElementSibling; if(next) tb.insertBefore(next,row); } $$('#prod-table tbody tr .btn-up').forEach((b,i)=> b.disabled=(i===0)); const rows=$$('#prod-table tbody tr'); rows.forEach((r,i)=>{ const dn=r.querySelector('.btn-down'); if(dn) dn.disabled=(i===rows.length-1); }); const ids=$$('#prod-table tbody tr').map(tr=>+tr.dataset.id); await api('/api/products/order',{method:'PUT', body:JSON.stringify({order:ids})}); state.products=await api('/api/products'); });
   let lastColorInput=null;
   $$('.prod-color').forEach(inp=>{ inp.addEventListener('focus',()=>lastColorInput=inp); inp.addEventListener('click',()=>lastColorInput=inp); });
-  $$('#fav-colors .swatch').forEach(s=> s.addEventListener('click',()=>{ const c=s.dataset.color; if(lastColorInput) lastColorInput.value=c; }));
-  $('#btn-save-all-products').onclick = async ()=>{
-    const rows=$$('#prod-table tbody tr');
-    const updates=[];
-    rows.forEach(tr=>{
-      const id=+tr.dataset.id;
-      const name=$(`input[data-id="${id}"][data-k="name"]`).value.trim();
-      const price=priceToNumber($(`input[data-id="${id}"][data-k="price"]`).value);
-      const active=$(`input[data-id="${id}"][data-k="active"]`).checked;
-      const half=$(`input[data-id="${id}"][data-k="half"]`).checked;
-      const color=$(`input[data-id="${id}"][data-k="color"]`).value||null;
-      const station=$(`select[data-id="${id}"][data-k="station"]`).value||null;
-      const cur=state.products.find(p=>p.id===id)||{};
-      const changed=(name!==cur.name)||(Math.abs(price-(cur.price||0))>1e-9)||(!!active!==!!cur.active)||((color||null)!==(cur.color||null))||(!!half!==!!cur.half)||((station||null)!==(cur.station||null));
-      if(changed) updates.push({id,name,price,active,color,half,station});
-    });
-    if(updates.length===0) return showNotification('Keine Änderungen', 'info');
-    try{
-      await api('/api/products/bulk',{method:'PUT', body:JSON.stringify({updates})});
-    }catch(e){
-      return showNotification('Fehler: '+e.message, 'warning');
-    }
-    await adminProductsLoad();
-    showNotification('Änderungen gespeichert', 'success');
-  };
+  $$('#fav-colors .swatch').forEach(s=> s.addEventListener('click',()=>{ const c=s.dataset.color; if(lastColorInput){ lastColorInput.value=c; saveProductRow(+lastColorInput.dataset.id); } }));
+  // Sofort-Speichern: jede Aenderung an einem Feld speichert die Zeile direkt
+  tb.querySelectorAll('input[data-k], select[data-k]').forEach(el=>{
+    el.addEventListener('change', ()=> saveProductRow(+el.dataset.id));
+  });
+}
+
+// Speichert eine Produktzeile sofort (Einzel-PUT). Aktualisiert state.products lokal.
+async function saveProductRow(id){
+  const name=$(`input[data-id="${id}"][data-k="name"]`).value.trim();
+  const price=priceToNumber($(`input[data-id="${id}"][data-k="price"]`).value);
+  const active=$(`input[data-id="${id}"][data-k="active"]`).checked;
+  const half=$(`input[data-id="${id}"][data-k="half"]`).checked;
+  const color=$(`input[data-id="${id}"][data-k="color"]`).value||null;
+  const station=$(`select[data-id="${id}"][data-k="station"]`).value||null;
+  if(!name || !(price>0)){ return showNotification('Name & Preis erforderlich', 'warning'); }
+  try{
+    await api(`/api/products/${id}`,{method:'PUT', body:JSON.stringify({name,price,active,color,half,station})});
+    const cur=state.products.find(p=>p.id===id); if(cur) Object.assign(cur,{name,price,active,color,half,station});
+    showNotification('Gespeichert', 'success');
+  }catch(e){
+    showNotification('Fehler: '+e.message, 'warning');
+  }
 }
 
 async function adminStationsLoad(){

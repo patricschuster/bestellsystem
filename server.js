@@ -1,4 +1,4 @@
-// server.js (2.10.2 + WebSocket + Security + Simulator)
+// server.js (2.10.3 + WebSocket + Security + Simulator)
 import express from 'express';
 import http from 'http';
 import https from 'https';
@@ -179,7 +179,7 @@ function writeConfigEntry(key,val){
   db.prepare('INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(val));
 }
 
-app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.10.2', time:new Date().toISOString() }));
+app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.10.3', time:new Date().toISOString() }));
 
 // Config
 app.get('/api/config', (_req,res)=> res.json(readConfigMap()));
@@ -293,8 +293,10 @@ app.put('/api/products/order', (req,res)=>{
   broadcast('products:updated', getProductsList());
   return ok(res);
 });
-app.put('/api/products/:id', (req,res)=>{
-  const id=+req.params.id; const cur=db.prepare('SELECT * FROM products WHERE id=?').get(id); if(!cur) return res.status(404).json({error:'not found'});
+app.put('/api/products/:id', (req,res,next)=>{
+  const id=+req.params.id;
+  if(!Number.isInteger(id)) return next(); // z.B. '/bulk' an spezifischere Route weiterreichen
+  const cur=db.prepare('SELECT * FROM products WHERE id=?').get(id); if(!cur) return res.status(404).json({error:'not found'});
   const {name,price,active,color,half,station}=req.body||{};
   db.prepare('UPDATE products SET name=?, price_cents=?, active=?, color=?, half=?, station=? WHERE id=?')
     .run(name??cur.name, price!==undefined?Math.round(price*100):cur.price_cents, active!==undefined?(active?1:0):cur.active, color!==undefined?color:cur.color, half!==undefined?(half?1:0):cur.half, station!==undefined?station:cur.station, id);
@@ -1116,9 +1118,9 @@ function getOrderWithItems(orderId) {
 // =============================================================================
 
 httpServer.listen(PORT, () => {
-  console.log(`Bestellsystem v2.10.2 on http://localhost:${PORT}`);
+  console.log(`Bestellsystem v2.10.3 on http://localhost:${PORT}`);
   console.log(`WebSocket server ready`);
-  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.10.2' });
+  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.10.3' });
 });
 
 // HTTPS Server (mit selbstsigniertem Zertifikat)
