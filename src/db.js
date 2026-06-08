@@ -1,4 +1,4 @@
-// src/db.js (Option B seed, v2.10.5)
+// src/db.js (Option B seed, v2.11.0)
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
@@ -159,10 +159,30 @@ INSERT INTO products(id,name,price_cents,color,half,active) VALUES
   // products: 'station' Spalte hinzufügen falls nicht vorhanden
   const hasProductsTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='products'").get();
   if(hasProductsTable){
-    const hasStationColumn = db.prepare("PRAGMA table_info(products)").all().find(col => col.name === 'station');
-    if(!hasStationColumn){
+    const cols = db.prepare("PRAGMA table_info(products)").all();
+    if(!cols.find(c => c.name === 'station')){
       db.exec('ALTER TABLE products ADD COLUMN station TEXT');
       console.log('Added station column to products');
+    }
+    // products: 'theken' (JSON-Array von Theken-Namen; NULL/[] = alle Theken) - Multi-Theken
+    if(!cols.find(c => c.name === 'theken')){
+      db.exec('ALTER TABLE products ADD COLUMN theken TEXT');
+      console.log('Added theken column to products');
+    }
+    // products: 'kategorie' (eine Kategorie pro Produkt; NULL = keine) - Auswahlgrid-Navigation
+    if(!cols.find(c => c.name === 'kategorie')){
+      db.exec('ALTER TABLE products ADD COLUMN kategorie TEXT');
+      console.log('Added kategorie column to products');
+    }
+  }
+
+  // orders: 'theke' Spalte (eindeutige Theke bei POS-Direktverkauf; NULL bei Bediener-Orders)
+  const hasOrdersTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='orders'").get();
+  if(hasOrdersTable){
+    const hasThekeCol = db.prepare("PRAGMA table_info(orders)").all().find(col => col.name === 'theke');
+    if(!hasThekeCol){
+      db.exec('ALTER TABLE orders ADD COLUMN theke TEXT');
+      console.log('Added theke column to orders');
     }
   }
 

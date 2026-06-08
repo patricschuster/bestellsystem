@@ -1,9 +1,9 @@
-// app.js (v2.10.5 + POS + Simulator)
+// app.js (v2.11.0 + POS + Simulator + Multi-Theke)
 const $  = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
 const on = (sel,evt,fn)=>{ const el=(typeof sel==='string')?$(sel):sel; if(el) el.addEventListener(evt,fn); };
 
-const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.10.5', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
+const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.11.0', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
 
 // iOS PWA: Pinch-Zoom (Multi-Touch) komplett blocken (Safari Gesture Events)
 document.addEventListener('gesturestart', (e) => e.preventDefault());
@@ -2381,7 +2381,7 @@ function renderWaiterHistory(){
 }
 
 /* Admin */
-async function adminInit(){ $$('.admin-tabs .tab').forEach(btn=>on(btn,'click',()=>{ $$('.admin-tabs .tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); const tab=btn.dataset.tab; $$('.admin-section').forEach(s=>s.classList.add('hidden')); if(tab==='tables'){ $('#admin-tables').classList.remove('hidden'); adminTablesLoad(); } if(tab==='products'){ $('#admin-products').classList.remove('hidden'); adminProductsLoad(); } if(tab==='stations'){ $('#admin-stations').classList.remove('hidden'); adminStationsLoad(); } if(tab==='report'){ $('#admin-report').classList.remove('hidden'); adminReportLoad(); } if(tab==='system'){ $('#admin-system').classList.remove('hidden'); adminSystemLoad(); } if(tab==='simulator'){ $('#admin-simulator').classList.remove('hidden'); adminSimulatorOpen(); } else { adminSimulatorClose(); } })); adminTablesLoad(); on('#btn-save-cols','click', adminSaveCols); on('#btn-save-theke-layout','click', adminSaveThekeLayout); on('#btn-apply-tables','click', adminApplyTables); on('#btn-add-product','click', adminAddProduct); on('#btn-add-station','click', adminAddStation); on('#btn-refresh-report','click', adminReportLoad); on('#btn-reset-report','click', adminResetReport); on('#btn-refresh-logs','click', adminSystemLoad); on('#btn-save-pin-bar','click', adminSavePinBar); on('#btn-save-pin-admin','click', adminSavePinAdmin); on('#btn-sim-start','click', simStart); on('#btn-sim-stop','click', simStop); on('#btn-sim-cleanup','click', simCleanup); }
+async function adminInit(){ $$('.admin-tabs .tab').forEach(btn=>on(btn,'click',()=>{ $$('.admin-tabs .tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); const tab=btn.dataset.tab; $$('.admin-section').forEach(s=>s.classList.add('hidden')); if(tab==='tables'){ $('#admin-tables').classList.remove('hidden'); adminTablesLoad(); } if(tab==='products'){ $('#admin-products').classList.remove('hidden'); adminProductsLoad(); } if(tab==='theken'){ $('#admin-theken').classList.remove('hidden'); adminThekenLoad(); } if(tab==='stations'){ $('#admin-stations').classList.remove('hidden'); adminStationsLoad(); } if(tab==='kategorien'){ $('#admin-kategorien').classList.remove('hidden'); adminKategorienLoad(); } if(tab==='report'){ $('#admin-report').classList.remove('hidden'); adminReportLoad(); } if(tab==='system'){ $('#admin-system').classList.remove('hidden'); adminSystemLoad(); } if(tab==='simulator'){ $('#admin-simulator').classList.remove('hidden'); adminSimulatorOpen(); } else { adminSimulatorClose(); } })); adminTablesLoad(); on('#btn-save-cols','click', adminSaveCols); on('#btn-save-theke-layout','click', adminSaveThekeLayout); on('#btn-apply-tables','click', adminApplyTables); on('#btn-add-product','click', adminAddProduct); on('#btn-add-station','click', adminAddStation); on('#btn-add-theke','click', adminAddTheke); on('#btn-add-kategorie','click', adminAddKategorie); on('#btn-refresh-report','click', adminReportLoad); on('#btn-reset-report','click', adminResetReport); on('#btn-refresh-logs','click', adminSystemLoad); on('#btn-save-pin-bar','click', adminSavePinBar); on('#btn-save-pin-admin','click', adminSavePinAdmin); on('#btn-sim-start','click', simStart); on('#btn-sim-stop','click', simStop); on('#btn-sim-cleanup','click', simCleanup); }
 async function adminTablesLoad(){ state.config=await api('/api/config'); $('#cfg-cols').value=state.config.grid_cols??4; $('#cfg-theke-layout').value=(state.config.theke_layout??'badges'); const tables=await api('/api/tables'); $('#tbl-count').textContent=tables.length; $('#tbl-target').value=tables.length; const prev=$('#admin-tables-preview'); prev.innerHTML=''; prev.style.setProperty('--cols', Math.max(3, Math.min(6, +($('#cfg-cols').value||4)))); tables.forEach((t,i)=>{ const b=document.createElement('button'); b.className='table-btn'; b.textContent=i+1; prev.appendChild(b); }); }
 async function adminSaveCols(){ const n=Math.max(3,Math.min(6,+($('#cfg-cols').value||4))); await api('/api/config',{method:'PUT', body:JSON.stringify({grid_cols:n})}); state.config.grid_cols=n; await adminTablesLoad(); }
 async function adminSaveThekeLayout(){ const v=$('#cfg-theke-layout').value||'badges'; await api('/api/config',{method:'PUT', body:JSON.stringify({theke_layout:v})}); state.config.theke_layout=v; await adminTablesLoad(); }
@@ -2397,11 +2397,58 @@ async function adminApplyTables(){
 function priceToNumber(s){ if(typeof s==='number') return s; s=(s||'').toString().trim().replace('.','').replace(',','.'); return parseFloat(s)||0; }
 // Favoritenfarben fuer Produktkacheln (einzige waehlbare Farben, kein freier Color-Picker)
 const FAV_COLORS=[{c:'#FCEFB4',n:'Gelb'},{c:'#C7C7C7',n:'Grau'},{c:'#F6B2B5',n:'Rosa'},{c:'#A7C7E7',n:'Blau'},{c:'#C1E1C1',n:'Hellgrün'},{c:'#A8D5BA',n:'Mintgrün'},{c:'#D4C5E8',n:'Lila'},{c:'#FFD8B1',n:'Pfirsich'},{c:'#ffffff',n:'Weiß'}];
-async function adminProductsLoad(){ const list=await api('/api/products'); state.products=list; const stations=(state.config.stations||[]); const tbl=$('#prod-table'); tbl.innerHTML=''; const thead=document.createElement('thead'); thead.innerHTML='<tr><th style="width:78px;">Reihenfolge</th><th>ID</th><th>Name</th><th>Preis</th><th>Farbe</th><th>Station</th><th>Aktiv</th><th>1/2</th><th></th></tr>'; tbl.appendChild(thead); const tb=document.createElement('tbody'); list.forEach((p,idx)=>{ const tr=document.createElement('tr'); tr.dataset.id=p.id; const color=p.color||'#ffffff'; const stationOptions=`<option value="">Keine</option>${stations.map(s=>`<option value="${s}" ${p.station===s?'selected':''}>${s}</option>`).join('')}`; tr.innerHTML=`<td><button class="btn-up" data-id="${p.id}" ${idx===0?'disabled':''}>▲</button> <button class="btn-down" data-id="${p.id}" ${idx===list.length-1?'disabled':''}>▼</button></td><td>${p.id}</td><td><input data-id="${p.id}" data-k="name" value="${p.name}"/></td><td><input data-id="${p.id}" data-k="price" value="${p.price.toFixed(2).replace('.',',')}"/></td><td><select class="color-select" data-id="${p.id}" data-k="color" style="background-color:${color}">${FAV_COLORS.some(f=>f.c.toLowerCase()===color.toLowerCase())?'':`<option value="${color}" selected>Aktuell</option>`}${FAV_COLORS.map(f=>`<option value="${f.c}" ${color.toLowerCase()===f.c.toLowerCase()?'selected':''}>${f.n}</option>`).join('')}</select></td><td><select data-id="${p.id}" data-k="station">${stationOptions}</select></td><td style="text-align:center;"><input type="checkbox" data-id="${p.id}" data-k="active" ${p.active?'checked':''}/></td><td style="text-align:center;"><input type="checkbox" data-id="${p.id}" data-k="half" ${p.half?'checked':''}/></td><td style="text-align:right;"><button class="btn-del" data-id="${p.id}" title="Löschen" aria-label="Löschen">🗑️</button></td>`; tb.appendChild(tr); }); tbl.appendChild(tb);
+async function adminProductsLoad(){
+  state.config=await api('/api/config'); // frisch, damit neue Theken/Kategorien erscheinen
+  const list=await api('/api/products');
+  state.products=list;
+  const stations=(state.config.stations||[]);
+  const theken=(state.config.theken||[]);
+  const kategorien=(state.config.kategorien||[]);
+  const showTheke = theken.length>=2;       // Theke-Spalte nur bei >=2 Theken (Plan 1A)
+  const showKat   = kategorien.length>=1;    // Kategorie-Spalte nur wenn >=1 Kategorie
+  const tbl=$('#prod-table'); tbl.innerHTML='';
+
+  // Header dynamisch
+  let head='<th style="width:78px;">Reihenfolge</th><th>ID</th><th>Name</th><th>Preis</th><th>Farbe</th><th>Station</th>';
+  if(showTheke) head+='<th>Theke(n)</th>';
+  if(showKat)   head+='<th>Kategorie</th>';
+  head+='<th>Aktiv</th><th>1/2</th><th></th>';
+  const thead=document.createElement('thead'); thead.innerHTML=`<tr>${head}</tr>`; tbl.appendChild(thead);
+
+  const tb=document.createElement('tbody');
+  list.forEach((p,idx)=>{
+    const tr=document.createElement('tr'); tr.dataset.id=p.id;
+    const color=p.color||'#ffffff';
+    const stationOptions=`<option value="">Keine</option>${stations.map(s=>`<option value="${s}" ${p.station===s?'selected':''}>${s}</option>`).join('')}`;
+    const colorCell=`<select class="color-select" data-id="${p.id}" data-k="color" style="background-color:${color}">${FAV_COLORS.some(f=>f.c.toLowerCase()===color.toLowerCase())?'':`<option value="${color}" selected>Aktuell</option>`}${FAV_COLORS.map(f=>`<option value="${f.c}" ${color.toLowerCase()===f.c.toLowerCase()?'selected':''}>${f.n}</option>`).join('')}</select>`;
+
+    // Theke-Mehrfachauswahl (leer = alle Theken)
+    const sel=Array.isArray(p.theken)?p.theken:[];
+    const summary = sel.length ? sel.join(', ') : 'Alle';
+    const thekeCell = showTheke ? `<td><details class="theke-multi" data-id="${p.id}"><summary>${summary}</summary><div class="theke-opts">${theken.map(t=>`<label><input type="checkbox" value="${t}" ${sel.includes(t)?'checked':''}/> ${t}</label>`).join('')}</div></details></td>` : '';
+    // Kategorie (eine)
+    const katCell = showKat ? `<td><select data-id="${p.id}" data-k="kategorie"><option value="">Keine</option>${kategorien.map(k=>`<option value="${k}" ${p.kategorie===k?'selected':''}>${k}</option>`).join('')}</select></td>` : '';
+
+    tr.innerHTML=`<td><button class="btn-up" data-id="${p.id}" ${idx===0?'disabled':''}>▲</button> <button class="btn-down" data-id="${p.id}" ${idx===list.length-1?'disabled':''}>▼</button></td><td>${p.id}</td><td><input data-id="${p.id}" data-k="name" value="${p.name}"/></td><td><input data-id="${p.id}" data-k="price" value="${p.price.toFixed(2).replace('.',',')}"/></td><td>${colorCell}</td><td><select data-id="${p.id}" data-k="station">${stationOptions}</select></td>${thekeCell}${katCell}<td style="text-align:center;"><input type="checkbox" data-id="${p.id}" data-k="active" ${p.active?'checked':''}/></td><td style="text-align:center;"><input type="checkbox" data-id="${p.id}" data-k="half" ${p.half?'checked':''}/></td><td style="text-align:right;"><button class="btn-del" data-id="${p.id}" title="Löschen" aria-label="Löschen">🗑️</button></td>`;
+    tb.appendChild(tr);
+  });
+  tbl.appendChild(tb);
+
   tb.addEventListener('click', async (e)=>{ const del=e.target.closest('.btn-del'); if(del){ const id=+del.dataset.id; if(!confirm(`Produkt #${id} wirklich löschen?`)) return; await api(`/api/products/${id}`,{method:'DELETE'}); await adminProductsLoad(); return; } const up=e.target.closest('.btn-up'); const down=e.target.closest('.btn-down'); if(!up&&!down) return; const id=+(up?up.dataset.id:down.dataset.id); const row=tb.querySelector(`tr[data-id="${id}"]`); if(up){ const prev=row.previousElementSibling; if(prev) tb.insertBefore(row,prev); } else { const next=row.nextElementSibling; if(next) tb.insertBefore(next,row); } $$('#prod-table tbody tr .btn-up').forEach((b,i)=> b.disabled=(i===0)); const rows=$$('#prod-table tbody tr'); rows.forEach((r,i)=>{ const dn=r.querySelector('.btn-down'); if(dn) dn.disabled=(i===rows.length-1); }); const ids=$$('#prod-table tbody tr').map(tr=>+tr.dataset.id); await api('/api/products/order',{method:'PUT', body:JSON.stringify({order:ids})}); state.products=await api('/api/products'); });
   // Farb-Dropdown: Hintergrund des Selects spiegelt die gewaehlte Farbe
   tb.querySelectorAll('select[data-k="color"]').forEach(sel=>{
     sel.addEventListener('change', ()=>{ sel.style.backgroundColor = sel.value; });
+  });
+  // Theke-Mehrfachauswahl: Summary aktualisieren + speichern
+  tb.querySelectorAll('.theke-multi').forEach(det=>{
+    det.querySelectorAll('input[type="checkbox"]').forEach(cb=>{
+      cb.addEventListener('change', ()=>{
+        const id=+det.dataset.id;
+        const chosen=Array.from(det.querySelectorAll('input[type="checkbox"]:checked')).map(c=>c.value);
+        det.querySelector('summary').textContent = chosen.length ? chosen.join(', ') : 'Alle';
+        saveProductRow(id);
+      });
+    });
   });
   // Sofort-Speichern: jede Aenderung an einem Feld speichert die Zeile direkt
   tb.querySelectorAll('input[data-k], select[data-k]').forEach(el=>{
@@ -2418,9 +2465,15 @@ async function saveProductRow(id){
   const color=$(`select[data-id="${id}"][data-k="color"]`)?.value||null;
   const station=$(`select[data-id="${id}"][data-k="station"]`).value||null;
   if(!name || !Number.isFinite(price) || price===0){ return showNotification('Name & Preis erforderlich (Preis ≠ 0, negativ erlaubt)', 'warning'); }
+  const body={name,price,active,color,half,station};
+  // Theke-Mehrfachauswahl nur senden, wenn die Spalte gerendert ist (sonst unveraendert lassen)
+  const thekeBox=$(`.theke-multi[data-id="${id}"]`);
+  if(thekeBox) body.theken=Array.from(thekeBox.querySelectorAll('input[type="checkbox"]:checked')).map(c=>c.value);
+  const katSel=$(`select[data-id="${id}"][data-k="kategorie"]`);
+  if(katSel) body.kategorie=katSel.value||null;
   try{
-    await api(`/api/products/${id}`,{method:'PUT', body:JSON.stringify({name,price,active,color,half,station})});
-    const cur=state.products.find(p=>p.id===id); if(cur) Object.assign(cur,{name,price,active,color,half,station});
+    await api(`/api/products/${id}`,{method:'PUT', body:JSON.stringify(body)});
+    const cur=state.products.find(p=>p.id===id); if(cur) Object.assign(cur,body);
     showNotification('Gespeichert', 'success');
   }catch(e){
     showNotification('Fehler: '+e.message, 'warning');
@@ -2483,6 +2536,45 @@ async function adminAddStation(){
   $('#station-new-name').value='';
   await adminStationsLoad();
 }
+
+// Generische Verwaltung von config-Listen (Theken, Kategorien) - analog Stationen
+async function adminConfigListLoad(configKey, listSel, labelSing){
+  state.config=await api('/api/config');
+  const items=state.config[configKey]||[];
+  const list=$(listSel);
+  list.innerHTML='';
+  if(items.length===0){ list.innerHTML=`<div class="muted">Keine ${labelSing} definiert</div>`; return; }
+  items.forEach(name=>{
+    const item=document.createElement('div');
+    item.className='station-item';
+    item.style.cssText='display:flex;justify-content:space-between;align-items:center;padding:12px;border:1px solid rgba(0,0,0,.1);border-radius:8px;margin-bottom:8px';
+    const nameDiv=document.createElement('div'); nameDiv.innerHTML=`<strong>${name}</strong>`;
+    const del=document.createElement('button'); del.className='outline'; del.textContent='Löschen';
+    del.addEventListener('click', async ()=>{
+      if(!confirm(`"${name}" wirklich löschen?`)) return;
+      const next=items.filter(s=>s!==name);
+      await api('/api/config',{method:'PUT', body:JSON.stringify({[configKey]:next})});
+      await adminConfigListLoad(configKey, listSel, labelSing);
+    });
+    item.append(nameDiv,del);
+    list.appendChild(item);
+  });
+}
+async function adminConfigListAdd(configKey, inputSel, listSel, labelSing){
+  const name=$(inputSel).value.trim();
+  if(!name) return alert(`Bitte ${labelSing}-Name eingeben`);
+  state.config=await api('/api/config');
+  const items=state.config[configKey]||[];
+  if(items.includes(name)) return alert(`"${name}" existiert bereits`);
+  items.push(name);
+  await api('/api/config',{method:'PUT', body:JSON.stringify({[configKey]:items})});
+  $(inputSel).value='';
+  await adminConfigListLoad(configKey, listSel, labelSing);
+}
+async function adminThekenLoad(){ return adminConfigListLoad('theken','#theken-list','Theke'); }
+async function adminAddTheke(){ return adminConfigListAdd('theken','#theke-new-name','#theken-list','Theke'); }
+async function adminKategorienLoad(){ return adminConfigListLoad('kategorien','#kategorien-list','Kategorie'); }
+async function adminAddKategorie(){ return adminConfigListAdd('kategorien','#kategorie-new-name','#kategorien-list','Kategorie'); }
 
 async function adminAddProduct(){ const name=$('#p-new-name').value.trim(); const price=priceToNumber($('#p-new-price').value); const color=$('#p-new-color').value||null; if(!name || !Number.isFinite(price) || price===0) return alert('Name & Preis erforderlich (Preis ≠ 0, negativ erlaubt)'); await api('/api/products',{method:'POST', body:JSON.stringify({name,price,color})}); $('#p-new-name').value=''; $('#p-new-price').value=''; $('#p-new-color').value='#ffffff'; await adminProductsLoad(); }
 async function adminReportLoad(){ const rep=await api('/api/report/summary'); $('#rep-total').textContent=fmtEuro(rep.total); const tbl=$('#rep-table'); tbl.innerHTML=''; const thead=document.createElement('thead'); thead.innerHTML='<tr><th>Produkt</th><th>Anzahl</th></tr>'; tbl.appendChild(thead); const tb=document.createElement('tbody'); (rep.products||[]).forEach(r=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${r.name}</td><td>${r.qty}</td>`; tb.appendChild(tr); }); tbl.appendChild(tb); }

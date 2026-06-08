@@ -195,7 +195,9 @@
   <div class="admin-tabs">
     <button class="tab active" data-tab="tables">Tische</button>
     <button class="tab" data-tab="products">Produkte</button>
+    <button class="tab" data-tab="theken">Theken</button>
     <button class="tab" data-tab="stations">Stationen</button>
+    <button class="tab" data-tab="kategorien">Kategorien</button>
     <button class="tab" data-tab="report">Auswertung</button>
     <button class="tab" data-tab="system">System</button>
     <button class="tab" data-tab="simulator">Simulator</button>
@@ -247,6 +249,17 @@
       <table class="prod-table" id="prod-table"></table>
     </div>
   </section>
+  <section id="admin-theken" class="admin-section hidden">
+    <div class="admin-card">
+      <h3>Theken verwalten</h3>
+      <p class="muted">Definieren Sie Theken. Nach dem Login als Theke wählt der Nutzer eine davon. Pro Produkt ist eine Mehrfachzuordnung möglich (Produkte-Tab). Produkte ohne Zuordnung erscheinen an allen Theken.</p>
+      <div class="inline">
+        <input id="theke-new-name" placeholder="z.B. Getränketheke, Essenstheke..."/>
+        <button id="btn-add-theke" class="primary">Theke hinzufügen</button>
+      </div>
+      <div id="theken-list" style="margin-top:16px;"></div>
+    </div>
+  </section>
   <section id="admin-stations" class="admin-section hidden">
     <div class="admin-card">
       <h3>Stationen verwalten</h3>
@@ -256,6 +269,17 @@
         <button id="btn-add-station" class="primary">Station hinzufügen</button>
       </div>
       <div id="stations-list" style="margin-top:16px;"></div>
+    </div>
+  </section>
+  <section id="admin-kategorien" class="admin-section hidden">
+    <div class="admin-card">
+      <h3>Kategorien verwalten</h3>
+      <p class="muted">Definieren Sie Kategorien für die zweistufige Produktauswahl (z.B. erst „Getränke" wählen, dann die Produkte). Pro Produkt eine Kategorie. Bei höchstens einer Kategorie wird die Zwischenebene übersprungen.</p>
+      <div class="inline">
+        <input id="kategorie-new-name" placeholder="z.B. Essen, Getränke..."/>
+        <button id="btn-add-kategorie" class="primary">Kategorie hinzufügen</button>
+      </div>
+      <div id="kategorien-list" style="margin-top:16px;"></div>
     </div>
   </section>
   <section id="admin-report" class="admin-section hidden">

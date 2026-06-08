@@ -1,4 +1,4 @@
-// server.js (2.10.5 + WebSocket + Security + Simulator)
+// server.js (2.11.0 + WebSocket + Security + Simulator + Multi-Theke)
 import express from 'express';
 import http from 'http';
 import https from 'https';
@@ -145,6 +145,8 @@ const productSchema = z.object({
   active: z.boolean().optional(),
   half: z.boolean().optional(),
   station: z.string().max(100).nullable().optional(),
+  theken: z.array(z.string().max(100)).nullable().optional(),
+  kategorie: z.string().max(100).nullable().optional(),
 });
 
 const pinUpdateSchema = z.object({
@@ -179,7 +181,7 @@ function writeConfigEntry(key,val){
   db.prepare('INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(val));
 }
 
-app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.10.5', time:new Date().toISOString() }));
+app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.11.0', time:new Date().toISOString() }));
 
 // Config
 app.get('/api/config', (_req,res)=> res.json(readConfigMap()));
@@ -269,21 +271,27 @@ app.put('/api/settings/pins', validate(pinUpdateSchema), (req, res) => {
 });
 
 // Products
-function getProductsList(){ const rows=db.prepare('SELECT id,name,price_cents,active,color,half,station FROM products').all(); const order=(readConfigMap().product_order)||[]; const idx=new Map(order.map((id,i)=>[id,i])); rows.sort((a,b)=>((idx.get(a.id)??1e9)-(idx.get(b.id)??1e9))||(a.id-b.id)); return rows.map(p=>({...p,price:p.price_cents/100})); }
+// theken-Spalte: JSON-Array von Namen; NULL/leer = alle Theken (implizit)
+function parseTheken(raw){ if(!raw) return []; try{ const a=JSON.parse(raw); return Array.isArray(a)?a:[]; }catch{ return []; } }
+function thekenToDb(val){ if(!Array.isArray(val)||val.length===0) return null; return JSON.stringify(val.filter(t=>typeof t==='string'&&t.trim())); }
+function mapProductRow(p){ return { ...p, price: p.price_cents/100, theken: parseTheken(p.theken), kategorie: p.kategorie||null }; }
+const PRODUCT_COLS='id,name,price_cents,active,color,half,station,theken,kategorie';
+
+function getProductsList(){ const rows=db.prepare(`SELECT ${PRODUCT_COLS} FROM products`).all(); const order=(readConfigMap().product_order)||[]; const idx=new Map(order.map((id,i)=>[id,i])); rows.sort((a,b)=>((idx.get(a.id)??1e9)-(idx.get(b.id)??1e9))||(a.id-b.id)); return rows.map(mapProductRow); }
 app.get('/api/products', (_req,res)=>{
-  const rows=db.prepare('SELECT id,name,price_cents,active,color,half,station FROM products').all();
+  const rows=db.prepare(`SELECT ${PRODUCT_COLS} FROM products`).all();
   const order=(readConfigMap().product_order)||[];
   const idx=new Map(order.map((id,i)=>[id,i]));
   rows.sort((a,b) => ((idx.get(a.id) ?? 1e9) - (idx.get(b.id) ?? 1e9)) || (a.id - b.id));
-  res.json(rows.map(p=>({ ...p, price: p.price_cents/100 })));
+  res.json(rows.map(mapProductRow));
 });
 app.post('/api/products', validate(productSchema), (req,res)=>{
-  const {name,price,color,active=true,half=false,station=null}=req.body;
-  const info=db.prepare('INSERT INTO products(name,price_cents,active,color,half,station) VALUES(?,?,?,?,?,?)').run(name, Math.round(price*100), active?1:0, color||null, half?1:0, station);
-  const out=db.prepare('SELECT id,name,price_cents,active,color,half,station FROM products WHERE id=?').get(info.lastInsertRowid);
+  const {name,price,color,active=true,half=false,station=null,theken=null,kategorie=null}=req.body;
+  const info=db.prepare('INSERT INTO products(name,price_cents,active,color,half,station,theken,kategorie) VALUES(?,?,?,?,?,?,?,?)').run(name, Math.round(price*100), active?1:0, color||null, half?1:0, station, thekenToDb(theken), kategorie||null);
+  const out=db.prepare(`SELECT ${PRODUCT_COLS} FROM products WHERE id=?`).get(info.lastInsertRowid);
   const order=(readConfigMap().product_order)||[]; order.push(out.id); writeConfigEntry('product_order',order);
   broadcast('products:updated', getProductsList());
-  res.status(201).json({ ...out, price: out.price_cents/100 });
+  res.status(201).json(mapProductRow(out));
 });
 app.put('/api/products/order', (req,res)=>{
   const arr=(req.body&&Array.isArray(req.body.order))?req.body.order.map(x=>+x):null;
@@ -297,12 +305,12 @@ app.put('/api/products/:id', (req,res,next)=>{
   const id=+req.params.id;
   if(!Number.isInteger(id)) return next(); // z.B. '/bulk' an spezifischere Route weiterreichen
   const cur=db.prepare('SELECT * FROM products WHERE id=?').get(id); if(!cur) return res.status(404).json({error:'not found'});
-  const {name,price,active,color,half,station}=req.body||{};
-  db.prepare('UPDATE products SET name=?, price_cents=?, active=?, color=?, half=?, station=? WHERE id=?')
-    .run(name??cur.name, price!==undefined?Math.round(price*100):cur.price_cents, active!==undefined?(active?1:0):cur.active, color!==undefined?color:cur.color, half!==undefined?(half?1:0):cur.half, station!==undefined?station:cur.station, id);
-  const out=db.prepare('SELECT id,name,price_cents,active,color,half,station FROM products WHERE id=?').get(id);
+  const {name,price,active,color,half,station,theken,kategorie}=req.body||{};
+  db.prepare('UPDATE products SET name=?, price_cents=?, active=?, color=?, half=?, station=?, theken=?, kategorie=? WHERE id=?')
+    .run(name??cur.name, price!==undefined?Math.round(price*100):cur.price_cents, active!==undefined?(active?1:0):cur.active, color!==undefined?color:cur.color, half!==undefined?(half?1:0):cur.half, station!==undefined?station:cur.station, theken!==undefined?thekenToDb(theken):cur.theken, kategorie!==undefined?(kategorie||null):cur.kategorie, id);
+  const out=db.prepare(`SELECT ${PRODUCT_COLS} FROM products WHERE id=?`).get(id);
   broadcast('products:updated', getProductsList());
-  res.json({ ...out, price: out.price_cents/100 });
+  res.json(mapProductRow(out));
 });
 app.delete('/api/products/:id', (req,res)=>{
   const id=+req.params.id;
@@ -320,7 +328,7 @@ app.put('/api/products/bulk', (req,res)=>{
   if(updates.length>500) return res.status(400).json({error:'max 500 updates per request'});
   const tx=db.transaction(()=>{
     const get=db.prepare('SELECT * FROM products WHERE id=?');
-    const upd=db.prepare('UPDATE products SET name=?, price_cents=?, active=?, color=?, half=?, station=? WHERE id=?');
+    const upd=db.prepare('UPDATE products SET name=?, price_cents=?, active=?, color=?, half=?, station=?, theken=?, kategorie=? WHERE id=?');
     for(const u of updates){
       const id=+u.id;
       if(!Number.isInteger(id)) continue;
@@ -333,6 +341,8 @@ app.put('/api/products/bulk', (req,res)=>{
         u.color!==undefined?u.color:cur.color,
         u.half!==undefined?(u.half?1:0):cur.half,
         u.station!==undefined?u.station:cur.station,
+        u.theken!==undefined?thekenToDb(u.theken):cur.theken,
+        u.kategorie!==undefined?(u.kategorie||null):cur.kategorie,
         id
       );
     }
@@ -974,7 +984,7 @@ wss.on('connection', (ws, req) => {
     }));
 
     const sessions = db.prepare('SELECT waiter, last_heartbeat FROM waiter_sessions ORDER BY waiter').all();
-    const products = db.prepare('SELECT id,name,price_cents,active,color,half,station FROM products').all().map(p => ({ ...p, price: p.price_cents / 100 }));
+    const products = db.prepare(`SELECT ${PRODUCT_COLS} FROM products`).all().map(mapProductRow);
 
     ws.send(JSON.stringify({
       event: 'init',
@@ -1118,9 +1128,9 @@ function getOrderWithItems(orderId) {
 // =============================================================================
 
 httpServer.listen(PORT, () => {
-  console.log(`Bestellsystem v2.10.5 on http://localhost:${PORT}`);
+  console.log(`Bestellsystem v2.11.0 on http://localhost:${PORT}`);
   console.log(`WebSocket server ready`);
-  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.10.5' });
+  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.11.0' });
 });
 
 // HTTPS Server (mit selbstsigniertem Zertifikat)
