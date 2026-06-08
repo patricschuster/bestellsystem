@@ -1,9 +1,9 @@
-// app.js (v2.10.1 + POS + Simulator)
+// app.js (v2.10.2 + POS + Simulator)
 const $  = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
 const on = (sel,evt,fn)=>{ const el=(typeof sel==='string')?$(sel):sel; if(el) el.addEventListener(evt,fn); };
 
-const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.10.1', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
+const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.10.2', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
 
 // iOS PWA: Pinch-Zoom (Multi-Touch) komplett blocken (Safari Gesture Events)
 document.addEventListener('gesturestart', (e) => e.preventDefault());
@@ -144,6 +144,22 @@ function sendClientInfo() {
   } catch (err) {
     console.warn('[WebSocket] sendClientInfo failed:', err);
   }
+}
+
+// Erzwingt eine frische WS-Verbindung, auch wenn readyState faelschlich OPEN meldet
+// (iOS-Standby-Zombie). Verwirft die alte Verbindung ohne deren Auto-Reconnect
+// doppelt auszuloesen, und baut sofort neu auf -> frisches init mit aktuellem State.
+function forceReconnectWebSocket() {
+  if (state.ws) {
+    const old = state.ws;
+    state.ws = null;        // Guard in connectWebSocket umgehen + onclose entkoppeln
+    old.onclose = null;     // kein zweiter Reconnect aus dem alten Socket
+    old.onerror = null;
+    old.onmessage = null;
+    try { old.close(); } catch {}
+  }
+  if (state.wsPingInterval) { clearInterval(state.wsPingInterval); state.wsPingInterval = null; }
+  connectWebSocket();
 }
 
 function disconnectWebSocket() {
@@ -2965,11 +2981,11 @@ startLoginHealthCheck();
 document.addEventListener('visibilitychange', async ()=>{
   if(!document.hidden && state.user){
     if(!state.wakeLock) await requestWakeLock();
-    // Sofortiger Reconnect-Versuch wenn WS nicht verbunden (z.B. nach Standby)
-    if(!state.ws || state.ws.readyState !== WebSocket.OPEN){
-      console.log('[WebSocket] Visibility restored – reconnecting immediately');
-      connectWebSocket();
-    }
+    // iOS-Zombie-Schutz: readyState kann faelschlich OPEN melden obwohl die
+    // Verbindung nach Standby tot ist (verpasste Broadcasts). Daher beim
+    // Sichtbarwerden IMMER hart neu verbinden -> frisches init synct den State.
+    console.log('[WebSocket] Visibility restored – forcing WS resync');
+    forceReconnectWebSocket();
   }
 });
 
