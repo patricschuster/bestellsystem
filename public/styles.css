@@ -398,8 +398,9 @@ textarea{resize:vertical;min-height:80px}
 .prod-table, .rep-table{width:100%;border-collapse:collapse}
 .prod-table th, .prod-table td, .rep-table th, .rep-table td{border-bottom:1px solid #eee;padding:8px;text-align:left}
 .btn-up, .btn-down, .btn-del{min-width:36px;padding:4px 8px}
-.fav-colors .swatch{width:24px;height:24px;border-radius:6px;border:1px solid rgba(0,0,0,.1);background:var(--c);cursor:pointer;min-height:24px}
-.fav-colors{gap:8px}
+/* Produkt-Farbauswahl: Dropdown nur mit Favoritenfarben, Feld in gewaehlter Farbe */
+.color-select{min-width:110px;font-weight:600}
+.color-select option{background:#fff;color:#0b0c0e}
 
 /* v2.3.20.6: login logo inside card - responsive */
 .card.login .logo{
