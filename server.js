@@ -1,4 +1,4 @@
-// server.js (2.10.3 + WebSocket + Security + Simulator)
+// server.js (2.10.4 + WebSocket + Security + Simulator)
 import express from 'express';
 import http from 'http';
 import https from 'https';
@@ -140,7 +140,7 @@ const orderSchema = z.object({
 
 const productSchema = z.object({
   name: z.string().min(1).max(200),
-  price: z.number().positive(),
+  price: z.number().refine(v => v !== 0, { message: 'price must not be zero' }), // negativ erlaubt (z.B. Pfand)
   color: z.string().max(20).nullable().optional(),
   active: z.boolean().optional(),
   half: z.boolean().optional(),
@@ -179,7 +179,7 @@ function writeConfigEntry(key,val){
   db.prepare('INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(val));
 }
 
-app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.10.3', time:new Date().toISOString() }));
+app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.10.4', time:new Date().toISOString() }));
 
 // Config
 app.get('/api/config', (_req,res)=> res.json(readConfigMap()));
@@ -1118,9 +1118,9 @@ function getOrderWithItems(orderId) {
 // =============================================================================
 
 httpServer.listen(PORT, () => {
-  console.log(`Bestellsystem v2.10.3 on http://localhost:${PORT}`);
+  console.log(`Bestellsystem v2.10.4 on http://localhost:${PORT}`);
   console.log(`WebSocket server ready`);
-  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.10.3' });
+  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.10.4' });
 });
 
 // HTTPS Server (mit selbstsigniertem Zertifikat)
