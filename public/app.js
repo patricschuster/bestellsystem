@@ -1,9 +1,9 @@
-// app.js (v2.11.0 + POS + Simulator + Multi-Theke)
+// app.js (v2.13.0 + POS + Simulator + Multi-Theke + Kategorie-Nav)
 const $  = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
 const on = (sel,evt,fn)=>{ const el=(typeof sel==='string')?$(sel):sel; if(el) el.addEventListener(evt,fn); };
 
-const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.11.0', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
+const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.13.0', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, selectedTheke:null, selectedCategory:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
 
 // iOS PWA: Pinch-Zoom (Multi-Touch) komplett blocken (Safari Gesture Events)
 document.addEventListener('gesturestart', (e) => e.preventDefault());
@@ -510,60 +510,54 @@ function renderStationSelect(){
   const list=$('#station-select-list');
   list.innerHTML='';
 
+  const theken=state.config.theken||[];
   const stations=state.config.stations||[];
-
-  // Prüfen ob es überhaupt Produkte mit Stationen gibt
   const productsWithStations=state.products.filter(p=>p.station);
-  if(productsWithStations.length===0){
-    list.innerHTML='<div class="muted text-center">Keine Stationen konfiguriert oder keine Produkte einer Station zugeordnet.</div>';
-    return;
-  }
 
-  // "Alle Bestellungen" Option
-  const allItem=document.createElement('div');
-  allItem.className='station-select-item';
-  allItem.style.padding='16px';
-  allItem.style.border='2px solid '+(state.selectedStation===null?'#0a84ff':'rgba(0,0,0,.1)');
-  allItem.style.borderRadius='8px';
-  allItem.style.marginBottom='12px';
-  allItem.style.cursor='pointer';
-  allItem.style.backgroundColor=state.selectedStation===null?'rgba(10,132,255,.05)':'transparent';
-  allItem.innerHTML='<strong>Alle Bestellungen</strong><div class="muted">Normale Thekenansicht</div>';
-  allItem.addEventListener('click',()=>{
-    state.selectedStation=null;
-    closeStationSelect();
-    renderTheke();
-    updateHeader('#view-theke');
-  });
-  list.appendChild(allItem);
-
-  // Stations-Optionen
-  stations.forEach(station=>{
-    // Nur Stationen anzeigen, die auch Produkte haben
-    const hasProducts=state.products.some(p=>p.station===station);
-    if(!hasProducts) return;
-
+  // Helper: ein anklickbares Auswahl-Item
+  const makeItem=(title, sub, selected, onClick)=>{
     const item=document.createElement('div');
     item.className='station-select-item';
-    item.style.padding='16px';
-    item.style.border='2px solid '+(state.selectedStation===station?'#0a84ff':'rgba(0,0,0,.1)');
-    item.style.borderRadius='8px';
-    item.style.marginBottom='12px';
-    item.style.cursor='pointer';
-    item.style.backgroundColor=state.selectedStation===station?'rgba(10,132,255,.05)':'transparent';
+    item.style.cssText=`padding:16px;border:2px solid ${selected?'#0a84ff':'rgba(0,0,0,.1)'};border-radius:8px;margin-bottom:12px;cursor:pointer;background-color:${selected?'rgba(10,132,255,.05)':'transparent'}`;
+    item.innerHTML=`<strong>${title}</strong>${sub?`<div class="muted">${sub}</div>`:''}`;
+    item.addEventListener('click', onClick);
+    return item;
+  };
+  const addHeader=(txt)=>{ const h=document.createElement('div'); h.className='muted small'; h.style.cssText='margin:0 0 8px;font-weight:700;letter-spacing:.5px'; h.textContent=txt; list.appendChild(h); };
 
-    const productsInStation=state.products.filter(p=>p.station===station);
-    item.innerHTML=`<strong>${station}</strong><div class="muted">${productsInStation.length} Produkt${productsInStation.length!==1?'e':''}</div>`;
-
-    item.addEventListener('click',()=>{
-      state.selectedStation=station;
-      closeStationSelect();
-      renderTheke();
-      updateHeader('#view-theke');
+  // Theke-Sektion (nur bei >=2 Theken). Theke-Klick aktualisiert nur die Markierung (Modal bleibt offen).
+  if(theken.length>=2){
+    addHeader('THEKE');
+    theken.forEach(theke=>{
+      const cnt=state.products.filter(p=>p.active && productInTheke(p.id, theke)).length;
+      list.appendChild(makeItem(theke, `${cnt} Produkte`, state.selectedTheke===theke, ()=>{
+        state.selectedTheke=theke;
+        renderStationSelect();
+        renderTheke();
+        updateHeader('#view-theke');
+      }));
     });
+  }
 
-    list.appendChild(item);
-  });
+  // Station-Sektion (nur wenn Produkte einer Station zugeordnet sind). Station-Klick schließt das Modal.
+  if(productsWithStations.length>0){
+    if(theken.length>=2){ const sep=document.createElement('div'); sep.style.cssText='height:1px;background:rgba(0,0,0,.1);margin:4px 0 16px'; list.appendChild(sep); }
+    addHeader('STATION');
+    list.appendChild(makeItem('Alle Bestellungen','Normale Thekenansicht', state.selectedStation===null, ()=>{
+      state.selectedStation=null; closeStationSelect(); renderTheke(); updateHeader('#view-theke');
+    }));
+    stations.forEach(station=>{
+      if(!state.products.some(p=>p.station===station)) return;
+      const cnt=state.products.filter(p=>p.station===station).length;
+      list.appendChild(makeItem(station, `${cnt} Produkt${cnt!==1?'e':''}`, state.selectedStation===station, ()=>{
+        state.selectedStation=station; closeStationSelect(); renderTheke(); updateHeader('#view-theke');
+      }));
+    });
+  }
+
+  if(theken.length<2 && productsWithStations.length===0){
+    list.innerHTML='<div class="muted text-center">Keine Theken oder Stationen konfiguriert.</div>';
+  }
 }
 
 /* Waiter Overview */
@@ -612,8 +606,10 @@ async function renderWaiterOverview(){
 function updateHeader(viewId){
   const titles={'#view-login':'Login','#view-tables':'Tische','#view-products':'Produkte','#view-theke':'Theke','#view-cash':'Kassieren','#view-cash-detail':'Bestellung','#view-admin':'Admin','#view-pos-history':'Letzte Bestellungen','#view-orders-history':'Meine Bestellungen'};
   let title=titles[viewId]||'Bestellsystem';
-  if(viewId==='#view-theke' && state.selectedStation){
-    title=`Station: ${state.selectedStation}`;
+  if(viewId==='#view-theke'){
+    if(state.selectedTheke && state.selectedStation) title=`${state.selectedTheke} · ${state.selectedStation}`;
+    else if(state.selectedTheke) title=state.selectedTheke;
+    else if(state.selectedStation) title=`Station: ${state.selectedStation}`;
   }
   $('#hdr-title').textContent=title;
   const onLogin=viewId==='#view-login';
@@ -629,7 +625,8 @@ function updateHeader(viewId){
   $('#btn-send-header').classList.toggle('hidden', viewId!=='#view-products');
   $('#btn-pos-toggle').classList.toggle('hidden', viewId!=='#view-theke' || state.role!=='bar' || state.selectedStation!==null);
   $('#btn-pos-history').classList.toggle('hidden', !(viewId==='#view-theke' && state.role==='bar' && state.selectedStation===null));
-  $('#btn-station-select').classList.toggle('hidden', !(state.role==='bar' && isThekeView && hasStationProducts));
+  const hasMultiTheke=(state.config.theken||[]).length>=2;
+  $('#btn-station-select').classList.toggle('hidden', !(state.role==='bar' && isThekeView && (hasStationProducts || hasMultiTheke)));
   $('#btn-station-select').classList.toggle('active', state.selectedStation!==null);
   $('#btn-sound-toggle').classList.toggle('hidden', !(state.role==='bar' && isThekeView));
   $('#btn-sound-toggle .material-symbols-outlined').textContent=state.soundEnabled?'volume_up':'volume_off';
@@ -718,11 +715,16 @@ on('#btn-login','click', async ()=>{
       await loadInitial();
       await requestWakeLock();
 
+      // Theke-Auswahl: 1 Theke = automatisch, >=2 = erste als Default + Auswahl-Modal, 0 = alle (null)
+      const theken=state.config.theken||[];
+      state.selectedTheke = theken.length>=1 ? theken[0] : null;
+
       // 🚀 Connect WebSocket (Health-Check läuft weiter bis WS-onopen stopLoginHealthCheck aufruft)
       connectWebSocket();
 
       renderTheke();
       show('#view-theke');
+      if(theken.length>=2) openStationSelect(); // zur Theke-Wahl auffordern
       pollOrders(); // Fallback polling (30s)
     }
     else {
@@ -781,7 +783,7 @@ on('#btn-back-header','click', ()=>{
   else show('#view-tables');
 });
 on('#btn-send-header','click', ()=>sendOrder());
-on('#btn-pos-toggle','click', ()=>{ state.posMode=!state.posMode; $('#btn-pos-toggle').textContent=state.posMode?'POS: AN':'POS: AUS'; $('#btn-pos-toggle').classList.toggle('active', state.posMode); renderTheke(); updateHeader('#view-theke'); });
+on('#btn-pos-toggle','click', ()=>{ state.posMode=!state.posMode; state.selectedCategory=null; $('#btn-pos-toggle').textContent=state.posMode?'POS: AN':'POS: AUS'; $('#btn-pos-toggle').classList.toggle('active', state.posMode); renderTheke(); updateHeader('#view-theke'); });
 on('#btn-sound-toggle','click', ()=>{ state.soundEnabled=!state.soundEnabled; localStorage.setItem('soundEnabled',state.soundEnabled?'on':'off'); updateHeader('#view-theke'); });
 on('#btn-pos-history','click', ()=>openPOSHistory());
 on('#btn-orders-history','click', ()=>openWaiterHistory());
@@ -874,7 +876,7 @@ on('#btn-confirm-change','click', async ()=>{
         state.posBasket.forEach((q,pid)=>{ for(let i=0;i<q;i++) items.push(pid); });
         const posTable=state.tables.find(t=>t.name==='POS');
         const table=posTable?.id||(state.tables[0]?.id||1);
-        const orderRes=await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: table, waiter: 'POS', items })});
+        const orderRes=await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: table, waiter: 'POS', items, theke: state.selectedTheke })});
         await api(`/api/orders/${orderRes.id}/pay`,{method:'POST'});
         state.posBasket.clear();
         state.orders=await api('/api/orders');
@@ -1084,13 +1086,63 @@ function showTableContextMenu(e,tableId){
 let currentTable=null; let basket=new Map();
 let currentCommentProduct=null;
 let addToOrderId=null;
-function openProducts(tid){ addToOrderId=null; currentTable=tid; $('#prod-table-label').textContent='Tisch '+tableDisplayNum(tid); basket.clear(); renderProducts(); show('#view-products'); }
-function openProductsForOrder(orderId){ const order=state.orders.find(o=>o.id===orderId); if(!order) return; addToOrderId=orderId; currentTable=order.table_id; $('#prod-table-label').textContent='Hinzufügen: Tisch '+tableDisplayNum(order.table_id); basket.clear(); renderProducts(); show('#view-products'); }
+function openProducts(tid){ addToOrderId=null; currentTable=tid; state.selectedCategory=null; $('#prod-table-label').textContent='Tisch '+tableDisplayNum(tid); basket.clear(); renderProducts(); show('#view-products'); }
+function openProductsForOrder(orderId){ const order=state.orders.find(o=>o.id===orderId); if(!order) return; addToOrderId=orderId; currentTable=order.table_id; state.selectedCategory=null; $('#prod-table-label').textContent='Hinzufügen: Tisch '+tableDisplayNum(order.table_id); basket.clear(); renderProducts(); show('#view-products'); }
 function contrastColor(hex){ if(!hex) return '#0b0c0e'; const h=hex.replace('#',''); if(h.length!=6) return '#0b0c0e'; const r=parseInt(h[0]+h[1],16), g=parseInt(h[2]+h[3],16), b=parseInt(h[4]+h[5],16); const yiq=((r*299)+(g*587)+(b*114))/1000; return yiq>=160 ? '#0b0c0e':'#ffffff'; }
+
+// === Kategorie-Navigation (zweistufiges Auswahlgrid, Phase 3) ===
+function categoryNavActive(){ return (state.config.kategorien||[]).length>=2; }
+function filterByCategory(products, cat){
+  if(cat===null) return products;
+  if(cat==='__sonstige__') return products.filter(p=>!p.kategorie);
+  return products.filter(p=>p.kategorie===cat);
+}
+function buildCategoryTile(label, count, onClick){
+  const card=document.createElement('div');
+  card.className='product-btn category-tile';
+  card.style.userSelect='none'; card.style.webkitUserSelect='none'; card.style.webkitTouchCallout='none';
+  const name=document.createElement('div'); name.className='name'; name.textContent=label;
+  const sub=document.createElement('div'); sub.className='cat-count'; sub.textContent=`${count} Produkt${count!==1?'e':''}`;
+  card.append(name, sub);
+  card.addEventListener('click', onClick);
+  return card;
+}
+function buildBackTile(onClick){
+  const card=document.createElement('div');
+  card.className='product-btn category-back';
+  card.style.userSelect='none'; card.style.webkitUserSelect='none'; card.style.webkitTouchCallout='none';
+  const ic=document.createElement('span'); ic.className='material-symbols-outlined'; ic.textContent='arrow_back';
+  const name=document.createElement('div'); name.className='name'; name.textContent='Zurück';
+  card.append(ic, name);
+  card.addEventListener('click', onClick);
+  return card;
+}
+// Rendert Kategorie-Kacheln. availableProducts = im Kontext sichtbare Produkte (z.B. Theke-gefiltert).
+function renderCategoryTiles(gridEl, availableProducts, onPick){
+  const cats=state.config.kategorien||[];
+  cats.forEach(cat=>{
+    const count=availableProducts.filter(p=>p.kategorie===cat).length;
+    if(count===0) return;
+    gridEl.appendChild(buildCategoryTile(cat, count, ()=>onPick(cat)));
+  });
+  const uncat=availableProducts.filter(p=>!p.kategorie).length;
+  if(uncat>0) gridEl.appendChild(buildCategoryTile('Sonstige', uncat, ()=>onPick('__sonstige__')));
+}
+
 function renderProducts(){
   const grid=$('#products-grid');
   grid.innerHTML='';
-  state.products.filter(p=>p.active).forEach(p=>{
+  const base=state.products.filter(p=>p.active); // Bediener sieht alle Produkte (Plan 4A)
+  // Kategorie-Auswahlebene (nur bei >=2 Kategorien)
+  if(categoryNavActive() && state.selectedCategory===null){
+    renderCategoryTiles(grid, base, (cat)=>{ state.selectedCategory=cat; renderProducts(); });
+    return;
+  }
+  if(categoryNavActive() && state.selectedCategory!==null){
+    grid.appendChild(buildBackTile(()=>{ state.selectedCategory=null; renderProducts(); }));
+  }
+  const products = categoryNavActive() ? filterByCategory(base, state.selectedCategory) : base;
+  products.forEach(p=>{
     const card=document.createElement('div');
     card.className='product-btn product-v1';
     card.style.userSelect='none';
@@ -1507,6 +1559,12 @@ function renderCashDetail(){
 function isOrderReady(o){ return o.items.length>0 && o.items.every(i=>i.ready); }
 function productName(id){ const p=state.products.find(x=>x.id===id); return p? p.name : ('P'+id); }
 function productStation(id){ const p=state.products.find(x=>x.id===id); return p? p.station : null; }
+// Theke-Zugehörigkeit: leer/undefined = alle Theken (implizit)
+function productThekenOf(id){ const p=state.products.find(x=>x.id===id); return (p&&Array.isArray(p.theken))?p.theken:[]; }
+function productInTheke(id, theke){ if(!theke) return true; const t=productThekenOf(id); return t.length===0 || t.includes(theke); }
+function itemInSelectedTheke(item){ return productInTheke(item.product_id, state.selectedTheke); }
+// Eine Order "betrifft" die Theke: POS-Order mit passender theke ODER ein Item-Produkt gehört zur Theke
+function orderInTheke(order, theke){ if(!theke) return true; if(order.theke===theke) return true; return (order.items||[]).some(it=>!it.cancelled && productInTheke(it.product_id, theke)); }
 async function renderTheke(){
   // Speichere Scroll-Positionen aller scrollbaren Elemente mit eindeutigen Selektoren
   const scrollableSelectors = [
@@ -1558,7 +1616,7 @@ function renderStationMode(){
   state.orders.filter(o=>o.status!=='picked').forEach(order=>{
     order.items.forEach(item=>{
       const station=productStation(item.product_id);
-      if(station===state.selectedStation && !item.ready && !item.cancelled){
+      if(station===state.selectedStation && !item.ready && !item.cancelled && itemInSelectedTheke(item)){
         stationItems.push({
           ...item,
           order_id:order.id,
@@ -1737,6 +1795,7 @@ function getRenderableBatches(orders){
     const map=new Map();
     o.items.forEach(it=>{
       if(it.cancelled) return;
+      if(!itemInSelectedTheke(it)) return; // Theke-Filter: nur Items dieser Theke
       const b=it.batch||1;
       if(!map.has(b)) map.set(b,[]);
       map.get(b).push(it);
@@ -1979,6 +2038,7 @@ function renderBedienerColumn(container){
     col.appendChild(title);
 
     const batchCards=getRenderableBatches(list);
+    if(batchCards.length===0) return; // nach Theke-Filter nichts uebrig -> Spalte weglassen
     batchCards.forEach(({order, batch, items})=>{
       col.appendChild(buildBatchCard(order, batch, items));
     });
@@ -1995,7 +2055,16 @@ function renderPOSColumn(container){
   const prodGrid=document.createElement('div');
   prodGrid.className='grid products';
 
-  state.products.filter(p=>p.active).forEach(p=>{
+  let posBase=state.products.filter(p=>p.active && productInTheke(p.id, state.selectedTheke));
+  // Kategorie-Navigation (Phase 3): erst Kategorie-Kacheln, dann Produkte
+  if(categoryNavActive() && state.selectedCategory===null){
+    renderCategoryTiles(prodGrid, posBase, (cat)=>{ state.selectedCategory=cat; renderTheke(); });
+    posBase=[];
+  } else if(categoryNavActive() && state.selectedCategory!==null){
+    prodGrid.appendChild(buildBackTile(()=>{ state.selectedCategory=null; renderTheke(); }));
+    posBase=filterByCategory(posBase, state.selectedCategory);
+  }
+  posBase.forEach(p=>{
     const card=document.createElement('div');
     card.className='product-btn product-v1';
     if(p.color){
@@ -2121,7 +2190,7 @@ function renderPOSColumn(container){
       state.posBasket.forEach((q,pid)=>{ for(let i=0;i<q;i++) items.push(pid); });
       const posTable=state.tables.find(t=>t.name==='POS');
       const table=posTable?.id||(state.tables[0]?.id||1);
-      const orderResponse=await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: table, waiter: 'POS', items })});
+      const orderResponse=await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: table, waiter: 'POS', items, theke: state.selectedTheke })});
       state.currentPOSOrderId=orderResponse.id;
       state.orders=await api('/api/orders');
       openChangeModal(orderResponse.total_cents/100, orderResponse.id);
@@ -2142,7 +2211,7 @@ function renderPOSColumn(container){
       state.posBasket.forEach((q,pid)=>{ for(let i=0;i<q;i++) items.push(pid); });
       const posTable=state.tables.find(t=>t.name==='POS');
       const table=posTable?.id||(state.tables[0]?.id||1);
-      const orderRes=await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: table, waiter: 'POS', items })});
+      const orderRes=await api('/api/orders',{method:'POST', body:JSON.stringify({ table_id: table, waiter: 'POS', items, theke: state.selectedTheke })});
       await api(`/api/orders/${orderRes.id}/pay`,{method:'POST'});
       state.posBasket.clear();
       state.orders=await api('/api/orders');
@@ -2244,7 +2313,8 @@ function renderPOSHistory(){
   const wrap=$('#pos-history-list');
   if(!wrap) return;
   wrap.innerHTML='';
-  const orders=state.posHistory||[];
+  // Theke-History: nur Orders, die die gewählte Theke betreffen (POS-Theke oder Item-Produkt der Theke)
+  const orders=(state.posHistory||[]).filter(o=>orderInTheke(o, state.selectedTheke));
   if(orders.length===0){
     wrap.innerHTML='<div class="muted">Keine Bestellungen vorhanden.</div>';
     return;

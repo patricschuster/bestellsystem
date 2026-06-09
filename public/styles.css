@@ -396,11 +396,26 @@ textarea{resize:vertical;min-height:80px}
 #system-logs{word-break:break-word;overflow-wrap:anywhere}
 .inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .prod-table, .rep-table{width:100%;border-collapse:collapse}
-.prod-table th, .prod-table td, .rep-table th, .rep-table td{border-bottom:1px solid #eee;padding:8px;text-align:left}
+.rep-table th, .rep-table td{border-bottom:1px solid #eee;padding:8px;text-align:left}
+/* Produkttabelle: Original-Optik (grosse Buttons), nur horizontal scrollbar bei vielen Spalten */
+.prod-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.prod-table th, .prod-table td{border-bottom:1px solid #eee;padding:8px;text-align:left;white-space:nowrap}
+.prod-table input[data-k="name"]{min-width:130px}
+.prod-table input[data-k="price"]{width:80px}
+.prod-table input[type="checkbox"]{width:24px;height:24px;min-height:24px;accent-color:var(--blue)}
 .btn-up, .btn-down, .btn-del{min-width:36px;padding:4px 8px}
 /* Produkt-Farbauswahl: Dropdown nur mit Favoritenfarben, Feld in gewaehlter Farbe */
 .color-select{min-width:110px;font-weight:600}
 .color-select option{background:#fff;color:#0b0c0e}
+
+/* Kategorie-Navigation: Kacheln im Auswahlgrid (zweistufig) */
+.product-btn.category-tile, .product-btn.category-back{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;cursor:pointer;padding-top:12px}
+.product-btn.category-tile{background:linear-gradient(#ffffff,#eef2f7);border-color:rgba(10,132,255,.25)}
+.product-btn.category-tile .name{font-size:19px;font-weight:800;line-height:1.15}
+.product-btn.category-tile .cat-count{font-size:13px;color:var(--muted);font-weight:600}
+.product-btn.category-back{background:linear-gradient(#f3f5f8,#e6eaef)}
+.product-btn.category-back .material-symbols-outlined{font-size:30px}
+.product-btn.category-back .name{font-weight:700}
 
 /* Produkt-Theke: Mehrfachauswahl als kompaktes Popover (<details>) */
 .theke-multi{position:relative;min-width:90px}

@@ -1,4 +1,4 @@
-// server.js (2.11.0 + WebSocket + Security + Simulator + Multi-Theke)
+// server.js (2.13.0 + WebSocket + Security + Simulator + Multi-Theke + Kategorie-Nav)
 import express from 'express';
 import http from 'http';
 import https from 'https';
@@ -129,6 +129,7 @@ const loginSchema = z.object({
 const orderSchema = z.object({
   table_id: z.number().int().positive(),
   waiter: z.string().min(1).max(100),
+  theke: z.string().max(100).nullable().optional(), // POS-Direktverkauf: eindeutige Theke
   items: z.array(z.union([
     z.number().int().positive(),
     z.object({
@@ -181,7 +182,7 @@ function writeConfigEntry(key,val){
   db.prepare('INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(val));
 }
 
-app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.11.0', time:new Date().toISOString() }));
+app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.13.0', time:new Date().toISOString() }));
 
 // Config
 app.get('/api/config', (_req,res)=> res.json(readConfigMap()));
@@ -635,7 +636,7 @@ app.get('/api/orders', (_req,res)=>{
 });
 app.post('/api/orders', validate(orderSchema), (req,res)=>{
   try{
-    const {table_id, waiter, items}=req.body;
+    const {table_id, waiter, items, theke=null}=req.body;
     const get=db.prepare('SELECT price_cents FROM products WHERE id=?');
     const priced=[];
     for(const item of items){
@@ -646,7 +647,7 @@ app.post('/api/orders', validate(orderSchema), (req,res)=>{
       priced.push({pid,price_cents:r.price_cents,comment});
     }
     const tx=db.transaction(()=>{
-      const info=db.prepare("INSERT INTO orders(table_id,waiter,status) VALUES(?,?,'open')").run(table_id, waiter);
+      const info=db.prepare("INSERT INTO orders(table_id,waiter,status,theke) VALUES(?,?,'open',?)").run(table_id, waiter, theke||null);
       const ins=db.prepare('INSERT INTO order_items(order_id,product_id,ready,price_cents,comment,batch) VALUES(?,?,0,?,?,1)');
       for(const {pid,price_cents,comment} of priced) ins.run(info.lastInsertRowid,pid,price_cents,comment);
       return info.lastInsertRowid;
@@ -1128,9 +1129,9 @@ function getOrderWithItems(orderId) {
 // =============================================================================
 
 httpServer.listen(PORT, () => {
-  console.log(`Bestellsystem v2.11.0 on http://localhost:${PORT}`);
+  console.log(`Bestellsystem v2.13.0 on http://localhost:${PORT}`);
   console.log(`WebSocket server ready`);
-  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.11.0' });
+  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.13.0' });
 });
 
 // HTTPS Server (mit selbstsigniertem Zertifikat)
