@@ -1,4 +1,4 @@
-// server.js (2.13.0 + WebSocket + Security + Simulator + Multi-Theke + Kategorie-Nav)
+// server.js (2.13.1 + WebSocket + Security + Simulator + Multi-Theke + Kategorie-Nav)
 import express from 'express';
 import http from 'http';
 import https from 'https';
@@ -182,7 +182,7 @@ function writeConfigEntry(key,val){
   db.prepare('INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(val));
 }
 
-app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.13.0', time:new Date().toISOString() }));
+app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.13.1', time:new Date().toISOString() }));
 
 // Config
 app.get('/api/config', (_req,res)=> res.json(readConfigMap()));
@@ -1129,9 +1129,9 @@ function getOrderWithItems(orderId) {
 // =============================================================================
 
 httpServer.listen(PORT, () => {
-  console.log(`Bestellsystem v2.13.0 on http://localhost:${PORT}`);
+  console.log(`Bestellsystem v2.13.1 on http://localhost:${PORT}`);
   console.log(`WebSocket server ready`);
-  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.13.0' });
+  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.13.1' });
 });
 
 // HTTPS Server (mit selbstsigniertem Zertifikat)
