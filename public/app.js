@@ -3,7 +3,7 @@ const $  = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
 const on = (sel,evt,fn)=>{ const el=(typeof sel==='string')?$(sel):sel; if(el) el.addEventListener(evt,fn); };
 
-const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.13.1', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, selectedTheke:null, selectedCategory:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
+const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.14.0', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, selectedTheke:null, selectedCategory:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
 
 // iOS PWA: Pinch-Zoom (Multi-Touch) komplett blocken (Safari Gesture Events)
 document.addEventListener('gesturestart', (e) => e.preventDefault());
@@ -1095,6 +1095,32 @@ function openProducts(tid){ addToOrderId=null; currentTable=tid; state.selectedC
 function openProductsForOrder(orderId){ const order=state.orders.find(o=>o.id===orderId); if(!order) return; addToOrderId=orderId; currentTable=order.table_id; state.selectedCategory=null; $('#prod-table-label').textContent='Hinzufügen: Tisch '+tableDisplayNum(order.table_id); basket.clear(); renderProducts(); show('#view-products'); }
 function contrastColor(hex){ if(!hex) return '#0b0c0e'; const h=hex.replace('#',''); if(h.length!=6) return '#0b0c0e'; const r=parseInt(h[0]+h[1],16), g=parseInt(h[2]+h[3],16), b=parseInt(h[4]+h[5],16); const yiq=((r*299)+(g*587)+(b*114))/1000; return yiq>=160 ? '#0b0c0e':'#ffffff'; }
 
+/* Produktfarbe auf ein Element anwenden (Kacheln im Bediener-/POS-/Station-Grid
+   und Item-Zeilen der Bestellkarten). opts.shadow=false laesst den Schlagschatten weg. */
+function applyProductColor(el, p, opts){
+  if(!p || !p.color) return false;
+  if(p.half){
+    el.style.background=`linear-gradient(to top, ${p.color} 50%, transparent 50%)`;
+  } else {
+    el.style.background=p.color;
+    el.style.color=contrastColor(p.color);
+  }
+  el.style.borderColor='rgba(0,0,0,.1)';
+  if(!opts || opts.shadow!==false) el.style.boxShadow='0 6px 16px rgba(0,0,0,.08)';
+  return true;
+}
+
+/* Produktnamen schreiben: jedes Wort auf eine eigene Zeile.
+   Bewusst ueber Textknoten statt innerHTML - Produktnamen kommen aus dem Admin. */
+function setProductNameLines(el, name){
+  el.textContent='';
+  const words=String(name||'').split(' ').filter(Boolean);
+  words.forEach((w,i)=>{
+    if(i>0) el.appendChild(document.createElement('br'));
+    el.appendChild(document.createTextNode(w));
+  });
+}
+
 // === Kategorie-Navigation (zweistufiges Auswahlgrid, Phase 3) ===
 function categoryNavActive(){ return (state.config.kategorien||[]).length>=2; }
 function filterByCategory(products, cat){
@@ -1154,18 +1180,7 @@ function renderProducts(){
     card.style.webkitUserSelect='none';
     card.style.webkitTouchCallout='none';
 
-    if(p.color){
-      if(p.half){
-        card.style.background=`linear-gradient(to top, ${p.color} 50%, transparent 50%)`;
-        card.style.borderColor='rgba(0,0,0,.1)';
-      } else {
-        card.style.background=p.color;
-        card.style.borderColor='rgba(0,0,0,.1)';
-        const col=contrastColor(p.color);
-        card.style.color=col;
-      }
-      card.style.boxShadow='0 6px 16px rgba(0,0,0,.08)';
-    }
+    applyProductColor(card, p);
 
     const minus=document.createElement('button');
     minus.className='minus';
@@ -1177,9 +1192,7 @@ function renderProducts(){
 
     const name=document.createElement('div');
     name.className='name';
-    const parts=p.name.split(' ');
-    if(parts.length>1) name.innerHTML=parts[0]+'<br>'+parts.slice(1).join(' ');
-    else name.textContent=p.name;
+    setProductNameLines(name, p.name);
 
     const basketItem=basket.get(p.id);
     const qty=basketItem?basketItem.items.length:0;
@@ -1678,18 +1691,7 @@ function renderStationMode(){
     card.className='product-btn product-v1 station-product';
     card.style.position='relative';
 
-    if(product&&product.color){
-      if(product.half){
-        card.style.background=`linear-gradient(to top, ${product.color} 50%, transparent 50%)`;
-        card.style.borderColor='rgba(0,0,0,.1)';
-      } else {
-        card.style.background=product.color;
-        card.style.borderColor='rgba(0,0,0,.1)';
-        const col=contrastColor(product.color);
-        card.style.color=col;
-      }
-      card.style.boxShadow='0 6px 16px rgba(0,0,0,.08)';
-    }
+    applyProductColor(card, product);
 
     const badge=document.createElement('div');
     badge.className='badge';
@@ -1848,7 +1850,12 @@ function buildBatchCard(o, batch, batchItems){
   batchItems.forEach(it=>{
     const line=document.createElement('div');
     line.className='item '+(it.ready?'ready':'');
-    line.textContent=productName(it.product_id);
+    setProductNameLines(line, productName(it.product_id));
+    // Produktfarbe uebernehmen; bei "bereit" gewinnt das gruene Ready-Styling
+    if(!it.ready){
+      const prod=state.products.find(p=>p.id===it.product_id);
+      if(applyProductColor(line, prod, {shadow:false})) line.classList.add('has-product-color');
+    }
     if(it.comment){
       const commentDiv=document.createElement('div');
       commentDiv.className='item-comment';
@@ -1867,6 +1874,18 @@ function buildBatchCard(o, batch, batchItems){
     itemsDiv.appendChild(line);
   });
   card.appendChild(itemsDiv);
+  // Gesamtbetrag als Kassenbon-Zeile ueber den Buttons - auf jeder Bestellkarte.
+  // Summiert genau die Positionen dieser Karte (Batch + Theke-Filter), damit der
+  // Betrag zu den Zeilen darueber passt und mehrere Batches sich nicht doppeln.
+  const totalRow=document.createElement('div');
+  totalRow.className='card-total';
+  const lbl=document.createElement('span');
+  lbl.className='lbl';
+  lbl.textContent='Gesamt';
+  const amt=document.createElement('strong');
+  amt.textContent=fmtEuro(batchItems.filter(it=>!it.cancelled).reduce((s,it)=>s+(it.price||0),0));
+  totalRow.append(lbl,amt);
+  card.appendChild(totalRow);
   const actions=document.createElement('div');
   actions.className='actions';
   const leftA=document.createElement('div');
@@ -2072,18 +2091,7 @@ function renderPOSColumn(container){
   posBase.forEach(p=>{
     const card=document.createElement('div');
     card.className='product-btn product-v1';
-    if(p.color){
-      if(p.half){
-        card.style.background=`linear-gradient(to top, ${p.color} 50%, transparent 50%)`;
-        card.style.borderColor='rgba(0,0,0,.1)';
-      } else {
-        card.style.background=p.color;
-        card.style.borderColor='rgba(0,0,0,.1)';
-        const col=contrastColor(p.color);
-        card.style.color=col;
-      }
-      card.style.boxShadow='0 6px 16px rgba(0,0,0,.08)';
-    }
+    applyProductColor(card, p);
     const minus=document.createElement('button');
     minus.className='minus';
     minus.setAttribute('aria-label','Minus');
@@ -2093,9 +2101,7 @@ function renderPOSColumn(container){
     });
     const name=document.createElement('div');
     name.className='name';
-    const parts=p.name.split(' ');
-    if(parts.length>1) name.innerHTML=parts[0]+'<br>'+parts.slice(1).join(' ');
-    else name.textContent=p.name;
+    setProductNameLines(name, p.name);
     const badge=document.createElement('div');
     badge.className='badge';
     badge.textContent=state.posBasket.get(p.id)||0;

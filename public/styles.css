@@ -126,7 +126,7 @@ textarea{resize:vertical;min-height:80px}
 .grid.products{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:10px;width:100%}
 @media (max-width: 380px){ .grid.products{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px} .product-btn.product-v1 .topbar{left:4px;right:4px}}
 .product-btn{position:relative;display:flex;align-items:center;justify-content:center;text-align:center;min-height:96px;padding:12px 8px;background:#fff;border:1px solid #eee;border-radius:14px;box-shadow:0 6px 16px rgba(0,0,0,.06);touch-action:manipulation}
-.product-btn .name{font-weight:800;line-height:1.15;white-space:normal;word-break:break-word;overflow-wrap:anywhere;-webkit-line-clamp:2;display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden;padding:0 6px}
+.product-btn .name{font-size:16px;font-weight:700;line-height:1.15;white-space:normal;word-break:break-word;overflow-wrap:anywhere;padding:0 6px}
 .product-btn .price{display:none}
 .product-btn.product-v1{padding-top:34px}
 .product-btn.product-v1 .topbar{position:absolute;left:6px;right:6px;top:6px;display:flex;justify-content:space-between;align-items:center;height:30px;padding:0}
@@ -248,7 +248,6 @@ textarea{resize:vertical;min-height:80px}
   position: relative;
 }
 .pos-products-area .product-btn .name{
-  font-size:14px;
   line-height:1.15;
   padding:0 4px;
 }
@@ -365,18 +364,32 @@ textarea{resize:vertical;min-height:80px}
   overscroll-behavior:contain;
 }
 .theke-col .col-title{position:sticky;top:0;z-index:10;text-align:center;font-weight:800;border:1px solid #eee;padding:6px 8px;background:#fff;border-radius:12px;box-shadow:0 6px 16px rgba(0,0,0,.06);margin-bottom:8px}
-.order-card{background:#fff;border:1px solid #eee;border-radius:14px;padding:12px;box-shadow:0 6px 16px rgba(0,0,0,.06)}
+.order-card{background:#fff;border:1px solid #eee;border-radius:14px;padding:12px;box-shadow:0 6px 16px rgba(0,0,0,.06);container-type:inline-size}
 .order-card.bg-open{background:#fff6f7}
 .order-card.bg-ready{background:#f0fff4}
 .order-card .row{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .order-card .meta{display:flex;align-items:center;gap:8px}
 .order-card .time{color:var(--muted);font-size:12px}
 .order-card .items{display:flex;flex-direction:column;gap:9px;margin-top:8px}
-.order-card .item{border:1px solid #eee;border-radius:8px;padding:9px 10px;cursor:pointer;min-height:82.5px;display:flex;flex-direction:column;justify-content:center;word-wrap:break-word;overflow-wrap:break-word;hyphens:auto}
-.order-card .item.ready{background:#ecfdf5;border-color:#bbf7d0}
+.order-card .item{border:1px solid #eee;border-radius:8px;padding:9px 10px;cursor:pointer;min-height:82.5px;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;font-size:16px;font-weight:700;line-height:1.15;word-wrap:break-word;overflow-wrap:break-word;hyphens:auto}
+/* bereit: gleiches Gruen wie der POS:AN-Button im Header */
+.order-card .item.ready{background:var(--green);border-color:var(--green);color:#fff}
+/* Kommentar-Zeile erbt die Textfarbe, damit sie auf farbigem Grund lesbar bleibt */
+.order-card .item.has-product-color .item-comment{color:inherit;opacity:.85}
+.order-card .item.ready .item-comment{color:#fff;opacity:.9}
 .order-card .status{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;color:#fff}
 .order-card .status.open{background:#e11d48}
 .order-card .status.ready{background:#16a34a}
+/* POS-Karte: Gesamtbetrag, optisch an .pos-total im Checkout angelehnt */
+.order-card .card-total{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px;padding-top:8px;border-top:2px solid #eee;font-size:15px;color:var(--muted)}
+.order-card .card-total strong{font-size:19px;color:var(--fg)}
+/* Schmale Spalte (z.B. POS-Hybrid mit geteilter Bediener-Spalte): kein Platz fuer
+   Label + Betrag nebeneinander -> "Gesamt" weg, Betrag mittig. Ohne Container-Query-
+   Unterstuetzung bleibt schlicht das Label stehen, nichts bricht. */
+@container (max-width: 200px){
+  .order-card .card-total .lbl{display:none}
+  .order-card .card-total{justify-content:center}
+}
 .order-card .actions{display:flex;justify-content:space-between;gap:8px;margin-top:8px}
 .order-card .actions .left{display:flex;gap:8px}
 .order-card .actions .right{display:flex;gap:8px;justify-content:flex-end}
@@ -825,6 +838,7 @@ textarea{resize:vertical;min-height:80px}
 
 /* Comment Display in Theke */
 .order-card .item-comment{
+  font-weight:400;
   font-size:12px;
   color:var(--blue);
   margin-top:4px;
