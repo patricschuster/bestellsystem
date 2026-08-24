@@ -24,3 +24,7 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Lokale Umgebung / Pi-Konfiguration (gehoert nicht ins Repo)
+.claude/settings.local.json
+restore_products.ps1
