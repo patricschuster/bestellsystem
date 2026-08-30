@@ -3,7 +3,7 @@ const $  = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
 const on = (sel,evt,fn)=>{ const el=(typeof sel==='string')?$(sel):sel; if(el) el.addEventListener(evt,fn); };
 
-const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.14.1', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, selectedTheke:null, selectedCategory:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
+const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:'2.18.0', posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, selectedTheke:null, selectedCategory:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
 
 // iOS PWA: Pinch-Zoom (Multi-Touch) komplett blocken (Safari Gesture Events)
 document.addEventListener('gesturestart', (e) => e.preventDefault());
@@ -269,9 +269,6 @@ function handleWebSocketEvent(event, data) {
       if (!$('#view-tables').classList.contains('hidden')) {
         renderTables();
       }
-      if (!$('#view-cash').classList.contains('hidden')) {
-        renderCash();
-      }
 
       // Play notification sound (optional)
       playNotificationSound();
@@ -355,10 +352,9 @@ function handleWebSocketEvent(event, data) {
 
     case 'order:cancelled':
       state.orders=state.orders.filter(o=>o.id!==data.id);
-      if(!$('#view-cash').classList.contains('hidden')) renderCash();
       if(!$('#view-tables').classList.contains('hidden')) renderTables();
       if(!$('#view-theke').classList.contains('hidden')) renderTheke();
-      if(currentCashOrder && currentCashOrder.id===data.id){ currentCashOrder=null; show('#view-cash'); renderCash(); }
+      if(currentCashOrder && currentCashOrder.id===data.id){ currentCashOrder=null; renderTables(); show('#view-tables'); }
       maybeRefreshReport();
       maybeRefreshHistories();
       break;
@@ -393,7 +389,6 @@ function renderForView(viewId){
   switch(viewId){
     case '#view-tables': renderTables(); break;
     case '#view-theke': renderTheke(); break;
-    case '#view-cash': renderCash(); break;
     case '#view-cash-detail': if (currentCashOrder) renderCashDetail(); break;
     case '#view-products': renderProducts(); break;
     case '#view-pos-history': renderPOSHistory(); break;
@@ -406,7 +401,6 @@ function renderForView(viewId){
 function renderActiveView() {
   if (!$('#view-tables').classList.contains('hidden')) renderTables();
   if (!$('#view-theke').classList.contains('hidden')) renderTheke();
-  if (!$('#view-cash').classList.contains('hidden')) renderCash();
   if (!$('#view-cash-detail').classList.contains('hidden') && currentCashOrder) renderCashDetail();
   if (!$('#view-products').classList.contains('hidden')) renderProducts();
   if (!$('#view-pos-history').classList.contains('hidden')) renderPOSHistory();
@@ -453,6 +447,15 @@ function playNotificationSound() {
 function fmtEuro(v){ return v.toFixed(2).replace('.',',')+' €'; }
 function toDate(s){ try{ if(!s) return new Date(); if(s.includes('T')) return new Date(s); return new Date(s.replace(' ','T')+'Z'); }catch{ return new Date(); } }
 function fmtAgeMinutes(s){ const d=toDate(s); const m=Math.max(0,Math.floor((Date.now()-d.getTime())/60000)); return `${m} min`; }
+/* Altersangaben auffrischen, ohne die Views neu zu bauen. Läuft über das
+   data-created-at-Attribut statt über eine bestimmte View und deckt damit alle
+   Theken-Render-Modi und den Kopf des Kassier-Details gleichermaßen ab. */
+function refreshAges(){
+  $$('[data-created-at]').forEach(el=>{
+    const s=fmtAgeMinutes(el.dataset.createdAt);
+    if(el.textContent!==s) el.textContent=s; // gleiche Minute -> kein Repaint
+  });
+}
 
 /* Favorites Management */
 function loadFavorites(){ if(!state.user) return; try{ const key=`favorites_${state.user}`; const data=localStorage.getItem(key); if(data){ const arr=JSON.parse(data); state.favorites=new Set(arr); } }catch{ state.favorites=new Set(); } }
@@ -624,9 +627,8 @@ function updateHeader(viewId){
   // Prüfen ob es Produkte mit Stationen gibt
   const hasStationProducts=state.products.some(p=>p.station);
 
-  $('#btn-logout').classList.toggle('hidden', onLogin || viewId==='#view-products' || viewId==='#view-pos-history' || viewId==='#view-orders-history' || viewId==='#view-cash' || viewId==='#view-cash-detail');
-  $('#btn-euro').classList.toggle('hidden', !(state.role==='waiter' && !onLogin && viewId!=='#view-products' && viewId!=='#view-cash' && viewId!=='#view-cash-detail' && viewId!=='#view-orders-history'));
-  $('#btn-back-header').classList.toggle('hidden', !(viewId==='#view-products' || viewId==='#view-pos-history' || viewId==='#view-orders-history' || viewId==='#view-cash' || viewId==='#view-cash-detail'));
+  $('#btn-logout').classList.toggle('hidden', onLogin || viewId==='#view-products' || viewId==='#view-pos-history' || viewId==='#view-orders-history' || viewId==='#view-cash-detail');
+  $('#btn-back-header').classList.toggle('hidden', !(viewId==='#view-products' || viewId==='#view-pos-history' || viewId==='#view-orders-history' || viewId==='#view-cash-detail'));
   $('#btn-send-header').classList.toggle('hidden', viewId!=='#view-products');
   $('#btn-pos-toggle').classList.toggle('hidden', viewId!=='#view-theke' || state.role!=='bar' || state.selectedStation!==null);
   $('#btn-pos-history').classList.toggle('hidden', !(viewId==='#view-theke' && state.role==='bar' && state.selectedStation===null));
@@ -691,18 +693,32 @@ on('#btn-login','click', async ()=>{
     if(state.role==='waiter'){
       const name=$('#inp-name').value.trim();
       if(!name) return alert('Bitte Name eingeben');
+      // Namen beim Server belegen - er lehnt ab, wenn schon jemand so angemeldet ist
+      try{
+        await api('/api/sessions/login',{method:'POST', body:JSON.stringify({waiter:name})});
+      }catch(e){
+        return alert(e.message);
+      }
       state.user=name;
-      await loadInitial();
-      loadFavorites();
-      await startHeartbeat();
-      await requestWakeLock();
+      try{
+        await loadInitial();
+        loadFavorites();
+        await startHeartbeat();
+        await requestWakeLock();
 
-      // 🚀 Connect WebSocket (Health-Check läuft weiter bis WS-onopen stopLoginHealthCheck aufruft)
-      connectWebSocket();
+        // 🚀 Connect WebSocket (Health-Check läuft weiter bis WS-onopen stopLoginHealthCheck aufruft)
+        connectWebSocket();
 
-      renderTables();
-      show('#view-tables');
-      pollOrders(); // Fallback polling (30s)
+        renderTables();
+        show('#view-tables');
+        pollOrders(); // Fallback polling (30s)
+      }catch(e){
+        // Anmeldung abgebrochen: Namen wieder freigeben, sonst sperrt sich der
+        // Bediener beim naechsten Versuch mit seiner eigenen Leiche aus.
+        try{ await api(`/api/sessions/${encodeURIComponent(name)}`,{method:'DELETE'}); }catch{}
+        state.user=null;
+        throw e;
+      }
     }
     else if(state.role==='bar'){
       const pin=$('#inp-pin').value.trim();
@@ -772,19 +788,12 @@ on('#btn-logout','click', async ()=>{
 
   location.reload();
 });
-on('#btn-euro','click', ()=>{ renderCash(); show('#view-cash'); });
 on('#btn-back-header','click', ()=>{
   const currentView=$$('.view').find(v=>!v.classList.contains('hidden'));
   if(currentView && currentView.id==='view-products' && addToOrderId){ addToOrderId=null; basket.clear(); openCashDetail(currentCashOrder.id); return; }
   if(currentView && currentView.id==='view-pos-history') show('#view-theke');
   else if(currentView && currentView.id==='view-orders-history') show('#view-tables');
-  else if(currentView && currentView.id==='view-cash-detail'){
-    const ret = state.cashDetailReturnTo || '#view-cash';
-    state.cashDetailReturnTo = null;
-    if(ret === '#view-tables'){ renderTables(); show('#view-tables'); }
-    else { renderCash(); show('#view-cash'); }
-  }
-  else if(currentView && currentView.id==='view-cash') show('#view-tables');
+  else if(currentView && currentView.id==='view-cash-detail'){ renderTables(); show('#view-tables'); }
   else show('#view-tables');
 });
 on('#btn-send-header','click', ()=>sendOrder());
@@ -848,16 +857,12 @@ on('#btn-confirm-change','click', async ()=>{
 
       state.orders=await api('/api/orders');
 
-      // Check if we're in cash view (detail or overview)
-      const inCashView = !$('#view-cash').classList.contains('hidden');
-
       // Update cash detail view if we're in it
       if(currentCashOrder && currentCashOrder.id==orderId){
         const wasInCashDetail = !$('#view-cash-detail').classList.contains('hidden');
         currentCashOrder=state.orders.find(o=>o.id==orderId);
         if(!currentCashOrder || currentCashOrder.status==='paid'){
-          // Order vollständig bezahlt → direkt zur Tisch-Übersicht (statt Cash-Liste)
-          state.cashDetailReturnTo=null;
+          // Order vollständig bezahlt → direkt zur Tisch-Übersicht
           renderTables();
           show('#view-tables');
         } else if(wasInCashDetail) {
@@ -865,12 +870,8 @@ on('#btn-confirm-change','click', async ()=>{
           selectedItems.clear();
           renderCashDetail();
         }
-      } else if(inCashView){
-        // We're in cash overview (not detail), just refresh it
-        renderCash();
-        renderTables();
       } else {
-        // Not in cash view, refresh theke
+        // Nicht im Kassier-Detail, Theke aktualisieren
         renderTheke();
       }
     } else {
@@ -1057,7 +1058,9 @@ function renderTables(){
     });
     b.addEventListener('click',(e)=>{
       if(pressTimer){ clearTimeout(pressTimer); pressTimer=null; }
-      // Smart-Click: aktive Bestellung(en) auf dem Tisch → Cash-Detail; sonst Produkt-Grid
+      // Smart-Click: aktive Bestellung auf dem Tisch → Kassier-Detail; sonst Produkt-Grid.
+      // Mehrere offene Bestellungen desselben Bedieners auf einem Tisch kann die
+      // Oberfläche nicht erzeugen; träte es doch auf, wird die älteste geöffnet.
       if(by[t.id]){
         const myOrders=state.orders.filter(o =>
           o.table_id===t.id &&
@@ -1065,13 +1068,8 @@ function renderTables(){
           o.status!=='paid' &&
           o.status!=='cancelled'
         );
-        if(myOrders.length===1){
-          openCashDetail(myOrders[0].id, '#view-tables');
-          return;
-        }
-        if(myOrders.length>1){
-          renderCash();
-          show('#view-cash');
+        if(myOrders.length>0){
+          openCashDetail(myOrders[0].id);
           return;
         }
       }
@@ -1289,119 +1287,19 @@ async function sendOrder(){
   }
 }
 
-/* Cash */
-function orderTotal(o){ return o.items.filter(it=>!it.paid&&!it.cancelled).reduce((s,it)=>s+it.price,0); }
-function renderCash(){
-  const wrap=$('#cash-list');
-  wrap.innerHTML='';
-  const mine=state.orders.filter(o=>o.waiter===state.user && o.status!=='paid' && o.status!=='cancelled');
-  if(mine.length===0){
-    wrap.innerHTML='<div class="muted">Keine offenen Bestellungen.</div>';
-    return;
-  }
-  mine.sort((a,b)=>a.table_id-b.table_id||a.created_at.localeCompare(b.created_at));
-  mine.forEach(o=>{
-    const card=document.createElement('div');
-    card.className='cash-card clickable';
-    card.addEventListener('click',()=>openCashDetail(o.id));
-
-    // Zeile 1: Tischnummer + Zeit (links) | Preis (rechts)
-    const topRow=document.createElement('div');
-    topRow.className='row';
-    const tableLabel=o.waiter==='POS'?'POS':`Tisch ${tableDisplayNum(o.table_id)}`;
-    const topLeft=document.createElement('div');
-    topLeft.style.fontSize='1.25rem';
-    topLeft.innerHTML=`<strong>${tableLabel}</strong> · <span class="muted">${fmtAgeMinutes(o.created_at)}</span>`;
-    const topRight=document.createElement('div');
-    topRight.style.fontSize='1.25rem';
-    topRight.innerHTML=`<strong>${fmtEuro(orderTotal(o))}</strong>`;
-    topRow.append(topLeft, topRight);
-    card.appendChild(topRow);
-
-    // Zeile 2: Buttons
-    const btnRow=document.createElement('div');
-    btnRow.className='cash-card-actions';
-
-    // Stornieren (nur wenn kein Item bezahlt)
-    const canCancel=o.items.every(it=>!it.paid);
-    if(canCancel){
-      const cancelBtn=document.createElement('button');
-      cancelBtn.className='btn-cancel-order ghost';
-      cancelBtn.style.padding='16px';
-      cancelBtn.style.minHeight='56px';
-      cancelBtn.title='Bestellung stornieren';
-      cancelBtn.innerHTML='<span class="material-symbols-outlined">delete</span>';
-      cancelBtn.addEventListener('click',async(e)=>{
-        e.stopPropagation();
-        if(!confirm(`Bestellung Tisch ${tableDisplayNum(o.table_id)} wirklich stornieren?`)) return;
-        await api(`/api/orders/${o.id}`,{method:'DELETE'});
-        state.orders=await api('/api/orders');
-        renderCash(); renderTables();
-      });
-      btnRow.appendChild(cancelBtn);
-    }
-
-    // Hinzufügen
-    const addBtn=document.createElement('button');
-    addBtn.className='ghost';
-    addBtn.style.padding='16px';
-    addBtn.style.minHeight='56px';
-    addBtn.title='Produkte hinzufügen';
-    addBtn.innerHTML='<span class="material-symbols-outlined">add</span>';
-    addBtn.addEventListener('click',(e)=>{
-      e.stopPropagation();
-      openProductsForOrder(o.id);
-    });
-    btnRow.appendChild(addBtn);
-
-    // Rückgeld
-    const changeBtn=document.createElement('button');
-    changeBtn.className='ghost';
-    changeBtn.style.padding='16px';
-    changeBtn.style.minHeight='56px';
-    changeBtn.title='Rückgeld berechnen';
-    changeBtn.innerHTML='<span class="material-symbols-outlined">calculate</span>';
-    changeBtn.addEventListener('click',(e)=>{
-      e.stopPropagation();
-      openChangeModal(orderTotal(o), o.id);
-    });
-    btnRow.appendChild(changeBtn);
-
-    // Alles kassiert
-    const btn=document.createElement('button');
-    btn.className='primary';
-    btn.style.flex='1';
-    btn.style.padding='16px 9px';
-    btn.style.minHeight='56px';
-    btn.innerHTML='<span class="material-symbols-outlined">check</span> Alles kassiert';
-    btn.addEventListener('click',async(e)=>{
-      e.stopPropagation();
-      await api(`/api/orders/${o.id}/pay`,{method:'POST'});
-      state.orders=await api('/api/orders');
-      renderCash();
-      renderTables();
-    });
-    btnRow.appendChild(btn);
-
-    card.appendChild(btnRow);
-    wrap.appendChild(card);
-  });
-}
-
 /* Cash Detail */
 let currentCashOrder=null;
 let selectedItems=new Set();
 
-function openCashDetail(orderId, returnTo='#view-cash'){
+function openCashDetail(orderId){
   currentCashOrder=state.orders.find(o=>o.id===orderId);
   if(!currentCashOrder) return;
   selectedItems.clear();
-  state.cashDetailReturnTo=returnTo;
   renderCashDetail();
   show('#view-cash-detail');
   const hdrRight=$('#hdr-right');
   const tableName=`Tisch ${tableDisplayNum(currentCashOrder.table_id)}`;
-  hdrRight.innerHTML=`<strong>${tableName}</strong> · <span class="muted">${fmtAgeMinutes(currentCashOrder.created_at)}</span>`;
+  hdrRight.innerHTML=`<strong>${tableName}</strong> · <span class="muted" data-created-at="${currentCashOrder.created_at}">${fmtAgeMinutes(currentCashOrder.created_at)}</span>`;
   hdrRight.classList.remove('hidden');
 }
 
@@ -1491,7 +1389,7 @@ function renderCashDetail(){
       await api(`/api/orders/${currentCashOrder.id}/items/${itemId}`,{method:'DELETE'});
       state.orders=await api('/api/orders');
       currentCashOrder=state.orders.find(o=>o.id===currentCashOrder.id)||null;
-      if(!currentCashOrder){ show('#view-cash'); renderCash(); } else { renderCashDetail(); }
+      if(!currentCashOrder){ renderTables(); show('#view-tables'); } else { renderCashDetail(); }
       renderTables();
     });
     right.appendChild(cancelItemBtn);
@@ -1543,7 +1441,6 @@ function renderCashDetail(){
     currentCashOrder=state.orders.find(o=>o.id===currentCashOrder.id);
     if(!currentCashOrder || currentCashOrder.status==='paid'){
       // Bestellung komplett bezahlt → direkt zurück zur Tisch-Übersicht
-      state.cashDetailReturnTo=null;
       renderTables();
       show('#view-tables');
     } else {
@@ -1559,7 +1456,6 @@ function renderCashDetail(){
     await api(`/api/orders/${currentCashOrder.id}/pay`,{method:'POST'});
     state.orders=await api('/api/orders');
     // Alles bezahlt → direkt zur Tisch-Übersicht
-    state.cashDetailReturnTo=null;
     renderTables();
     show('#view-tables');
   });
@@ -1832,6 +1728,7 @@ function buildBatchCard(o, batch, batchItems){
   h.innerHTML=`<strong>${tableLabel}${batchSuffix}</strong>`;
   const t=document.createElement('div');
   t.className='time';
+  t.dataset.createdAt=o.created_at;
   t.textContent=fmtAgeMinutes(o.created_at);
   meta.append(h,t);
   const allReady=batchItems.every(it=>it.ready);
@@ -1892,11 +1789,13 @@ function buildBatchCard(o, batch, batchItems){
   leftA.className='left';
   const rightA=document.createElement('div');
   rightA.className='right';
+  // Symmetrischer Toggle: quittiert die Welle, und nimmt bei erneutem Druck genau
+  // das zurueck, was der vorige Klick gesetzt hat.
   const allReadyBtn=document.createElement('button');
-  allReadyBtn.className='outline order-action-btn';
-  allReadyBtn.textContent='Alle bereit';
+  allReadyBtn.className='outline order-action-btn'+(allReady?' btn-undo-ready':'');
+  allReadyBtn.textContent=allReady?'Alle offen':'Alle bereit';
   allReadyBtn.addEventListener('click', async ()=>{
-    await api(`/api/orders/${o.id}/batch/${batch}/ready`,{method:'POST'});
+    await api(`/api/orders/${o.id}/batch/${batch}/ready`,{method:'POST', body:JSON.stringify({ready:!allReady})});
     state.orders=await api('/api/orders');
     renderTheke();
   });
@@ -3110,7 +3009,7 @@ async function pollOrders(){
       if (!wsConnected) {
         console.log('[Polling] WebSocket offline, using polling fallback...');
 
-        const active=['#view-theke','#view-cash','#view-tables','#view-products','#view-admin'];
+        const active=['#view-theke','#view-tables','#view-products','#view-admin'];
         if(active.some(v=>!$(v).classList.contains('hidden'))){
           state.orders=await api('/api/orders');
           state.sessions=await api('/api/sessions');
@@ -3144,6 +3043,11 @@ show('#view-login');
 // Verbindungsanzeige schon auf der Login-Seite aktivieren
 startLoginHealthCheck();
 
+// Das Alter der Bestellungen läuft weiter, auch wenn an der Theke kein Event
+// passiert (lange Zubereitung). 30 s: die Anzeige hat Minutenauflösung, damit
+// ist sie nie mehr als eine halbe Minute daneben.
+setInterval(refreshAges, 30000);
+
 // iOS PWA + Desktop: readonly bei pointerdown entfernen (deckt Touch und Maus ab)
 ['#inp-name','#inp-pin'].forEach(sel=>{
   const el=$(sel);
@@ -3154,6 +3058,9 @@ startLoginHealthCheck();
 // Wake Lock und WebSocket bei Sichtbarkeitswechsel reaktivieren (iOS Standby-Wakeup)
 document.addEventListener('visibilitychange', async ()=>{
   if(!document.hidden && state.user){
+    // iOS friert Timer im Hintergrund ein - Alter sofort korrigieren, statt
+    // bis zu 30 s lang veraltete Zahlen zu zeigen
+    refreshAges();
     if(!state.wakeLock) await requestWakeLock();
     // iOS-Zombie-Schutz: readyState kann faelschlich OPEN melden obwohl die
     // Verbindung nach Standby tot ist (verpasste Broadcasts). Daher beim

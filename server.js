@@ -389,6 +389,25 @@ app.get('/api/sessions', (_req,res)=>{
   const sessions=db.prepare('SELECT waiter, last_heartbeat FROM waiter_sessions ORDER BY waiter').all();
   res.json(sessions);
 });
+// Bediener-Anmeldung: der Name IST die ID und darf nur einmal aktiv sein.
+// Abgelaufene Sessions vorher wegraeumen - sonst blockiert ein abgestuerztes
+// Geraet seinen eigenen Namen, bis das 5-Minuten-Fenster durch ist.
+app.post('/api/sessions/login', (req,res)=>{
+  const waiter=((req.body&&req.body.waiter)||'').toString().trim();
+  if(!waiter) return res.status(400).json({error:'waiter required'});
+  db.prepare("DELETE FROM waiter_sessions WHERE datetime(last_heartbeat) < datetime('now','-5 minutes')").run();
+  // COLLATE NOCASE: "Stefan" und "stefan" sind derselbe Bediener, sonst waere
+  // die Eindeutigkeit mit einem Grossbuchstaben trivial zu umgehen.
+  const taken=db.prepare('SELECT waiter FROM waiter_sessions WHERE waiter=? COLLATE NOCASE').get(waiter);
+  if(taken){
+    log('warning','session',`Anmeldung abgelehnt - Name belegt: ${waiter}`);
+    return res.status(409).json({ error:`"${taken.waiter}" ist bereits angemeldet. Bitte einen anderen Namen wählen oder das andere Gerät an der Theke abmelden lassen.` });
+  }
+  db.prepare("INSERT INTO waiter_sessions(waiter,last_heartbeat) VALUES(?,datetime('now'))").run(waiter);
+  broadcast('session:update', db.prepare('SELECT waiter, last_heartbeat FROM waiter_sessions ORDER BY waiter').all());
+  log('info','session',`New session created: ${waiter}`);
+  return ok(res,{waiter});
+});
 app.post('/api/sessions/heartbeat', (req,res)=>{
   const {waiter}=req.body||{};
   if(!waiter) return res.status(400).json({error:'waiter required'});
@@ -728,12 +747,16 @@ app.post('/api/orders/:id/pickup', (req,res)=>{
   return ok(res);
 });
 
-// Batch-spezifisch: alle Items dieser Welle bereit setzen
+// Batch-spezifisch: alle Items dieser Welle bereit setzen - oder mit ready:false
+// im Body wieder auf offen. Bereits abgeholte Positionen bleiben beim Zuruecksetzen
+// bereit, sonst entstuende der widerspruechliche Zustand "abgeholt, aber nicht bereit".
 app.post('/api/orders/:id/batch/:batch/ready', (req,res)=>{
   const id=+req.params.id;
   const batch=+req.params.batch;
+  const ready=(req.body && req.body.ready===false)?0:1;
   const tx=db.transaction(()=>{
-    db.prepare('UPDATE order_items SET ready=1 WHERE order_id=? AND batch=? AND cancelled=0').run(id,batch);
+    if(ready) db.prepare('UPDATE order_items SET ready=1 WHERE order_id=? AND batch=? AND cancelled=0').run(id,batch);
+    else db.prepare('UPDATE order_items SET ready=0 WHERE order_id=? AND batch=? AND cancelled=0 AND picked=0').run(id,batch);
     // Order-Status neu berechnen
     const items=db.prepare('SELECT ready, picked, cancelled FROM order_items WHERE order_id=?').all(id);
     const active=items.filter(i=>!i.cancelled);
