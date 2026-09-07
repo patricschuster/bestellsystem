@@ -1,5 +1,11 @@
 # HTTPS Setup für iPad Wake Lock
 
+Status (geprüft 2026-09-07): **Anleitung gültig, aktuell nicht ausgeführt.**
+`certs/` ist leer, der Server startet daher nur HTTP auf Port 3000 und meldet
+im Log "HTTPS nicht verfügbar - Zertifikate fehlen in ./certs/". Solange das
+so ist, greift der Wake Lock nicht und das iPad-Display geht in den Standby.
+
+
 ## Warum HTTPS?
 Die Screen Wake Lock API funktioniert nur über HTTPS (oder localhost). Um das Display auf dem iPad wach zu halten, muss die Anwendung über HTTPS aufgerufen werden.
 

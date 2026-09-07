@@ -1,4 +1,4 @@
-// server.js (2.13.1 + WebSocket + Security + Simulator + Multi-Theke + Kategorie-Nav)
+// server.js (WebSocket + Security + Simulator + Multi-Theke + Kategorie-Nav)
 import express from 'express';
 import http from 'http';
 import https from 'https';
@@ -33,6 +33,9 @@ let prevNetSnapshot = null;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Einzige Versionsquelle: package.json (siehe scripts/check-version.js)
+const APP_VERSION = JSON.parse(fs.readFileSync(new URL("./package.json", import.meta.url), "utf8")).version;
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -182,7 +185,10 @@ function writeConfigEntry(key,val){
   db.prepare('INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(val));
 }
 
-app.get('/health', (_req,res)=> res.json({ ok:true, version:'2.13.1', time:new Date().toISOString() }));
+app.get('/health', (_req,res)=> res.json({ ok:true, version:APP_VERSION, time:new Date().toISOString() }));
+
+// Versionsausgabe fuer das Frontend (synchron vor app.js geladen)
+app.get('/version.js', (_req,res)=> res.type('application/javascript').set('Cache-Control','no-store').send(`window.__APP_VERSION__=${JSON.stringify(APP_VERSION)};`));
 
 // Config
 app.get('/api/config', (_req,res)=> res.json(readConfigMap()));
@@ -1152,9 +1158,9 @@ function getOrderWithItems(orderId) {
 // =============================================================================
 
 httpServer.listen(PORT, () => {
-  console.log(`Bestellsystem v2.13.1 on http://localhost:${PORT}`);
+  console.log(`Bestellsystem v${APP_VERSION} on http://localhost:${PORT}`);
   console.log(`WebSocket server ready`);
-  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: '2.13.1' });
+  log('info', 'system', 'Server started with WebSocket support', { port: PORT, version: APP_VERSION });
 });
 
 // HTTPS Server (mit selbstsigniertem Zertifikat)

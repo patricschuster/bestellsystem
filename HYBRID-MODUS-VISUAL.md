@@ -263,12 +263,20 @@ function calculateHybridLayout() {
 
 ---
 
-## Nächste Schritte:
+## Umsetzungsstand (geprüft 2026-09-07)
 
-1. ✅ Visuals erstellen (erledigt)
-2. ⏳ Modus-Name festlegen: **"Theken-Modus"**
-3. ⏳ UI implementieren
-4. ⏳ Dynamische Layout-Berechnung
-5. ⏳ Header-Button hinzufügen
-6. ⏳ POS-Spalte mit 70/30 Split
-7. ⏳ Auto-Switching bei Bediener-Änderung
+1. ✅ Visuals erstellt
+2. ✅ Modus-Name festgelegt: **"Theken-Modus"**
+3. ✅ UI implementiert — Umschaltung über `state.posMode` (`public/app.js:800`)
+4. ✅ Dynamische Layout-Berechnung — `layoutPOSGrid()` (`public/app.js:2151`)
+5. ✅ Header-Button vorhanden (`#btn-pos-toggle`, Beschriftung "POS: AN/AUS")
+6. ✅ Zweispaltiges Split-Layout, CSS in `public/styles.css:181-182`
+7. ✅ Automatische Anpassung an die Bediener-Anzahl (`public/app.js:1898`)
+
+**Abweichung von den Skizzen oben:** Implementiert sind die Splits **30/70**
+(0–1 Bediener) und **50/50** (ab 2 Bedienern). Die Zeichnungen in diesem
+Dokument zeigen noch die ursprünglich angedachten 70/30 bzw. 30/70. Der
+Grund für die Änderung ist nicht dokumentiert.
+
+**Ebenfalls abweichend:** Der Header-Button heißt "POS: AN/AUS", nicht wie in
+den Varianten A–C oben vorgeschlagen.

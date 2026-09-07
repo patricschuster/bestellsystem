@@ -1,4 +1,4 @@
-// src/simulator.js (v2.10.0)
+// src/simulator.js
 // Server-seitiger Last-/Workflow-Simulator. Erzeugt virtuelle Bediener mit
 // realistischen Order-/Theke-/Kasse-Mustern direkt ueber die DB.
 //

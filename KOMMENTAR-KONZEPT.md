@@ -1,5 +1,21 @@
 # Kommentar-Funktion für Bestellungen
 
+Status (geprüft 2026-09-07): **Grundfunktion umgesetzt, Erweiterungen offen.**
+
+Umgesetzt:
+- Freitext-Kommentar pro Position, Dialog beim Bestellen
+  (`public/index.html:80-95`, `public/app.js:474-508`)
+- Spalte `comment` in `order_items`, Validierung max. 500 Zeichen
+  (`server.js:140`)
+- Kommentar-Icon auf der Produktkachel (`public/app.js:1206-1210`)
+- Anzeige in der Theken-/Kitchen-Ansicht
+
+Offen (siehe „Weitere Überlegungen" am Ende):
+- Quick-Kommentare / Templates
+- Kommentar nachträglich bearbeiten
+- Kommentar-History im Admin-Bereich
+
+
 ## Visual: Bediener-Ansicht (Bestellung aufnehmen)
 
 ```

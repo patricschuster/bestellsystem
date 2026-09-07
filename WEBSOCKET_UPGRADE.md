@@ -1,5 +1,12 @@
 # WebSocket Upgrade Guide
 
+Status (geprüft 2026-09-07): **Umstellung abgeschlossen, ausgeliefert mit
+v2.4.** Dieses Dokument ist die Migrationsanleitung von damals — die
+Checkliste am Ende gehört zur damaligen Umstellung und ist erledigt.
+Nachträglich ergänzt: Heartbeat mit Ping alle 30 s und Status-Indikator im
+Header (`public/app.js:56-66`, `public/app.js:187-188`).
+
+
 ## 🚀 Was wurde implementiert?
 
 Das Bestellsystem nutzt jetzt **WebSocket mit Polling-Fallback** (Hybrid-Modus) für Echtzeit-Updates.
@@ -328,7 +335,7 @@ Optional: Admin-Panel mit WebSocket-Statistiken (verbundene Clients, Events/Minu
 
 ---
 
-## ✅ Checkliste: Erfolgreich implementiert?
+## ✅ Checkliste der damaligen Umstellung (alle Punkte erfüllt)
 
 - [ ] `ws` ist in package.json eingetragen
 - [ ] Docker Container neu gebaut

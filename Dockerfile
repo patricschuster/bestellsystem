@@ -1,4 +1,4 @@
-# Dockerfile (v2.9.8) — Debian-Basis fuer vcgencmd-Kompatibilitaet auf dem Pi
+# Dockerfile — Debian-Basis fuer vcgencmd-Kompatibilitaet auf dem Pi
 FROM node:20-bookworm-slim
 WORKDIR /app
 ENV NODE_ENV=production
@@ -15,6 +15,10 @@ RUN npm install --production
 COPY server.js ./
 COPY src ./src
 COPY public ./public
+COPY scripts ./scripts
+
+# Waechter: bricht den Build ab, wenn Versionsnummern hartcodiert wurden
+RUN node scripts/check-version.js
 RUN mkdir -p /app/data
 VOLUME ["/app/data"]
 ENV PORT=3000

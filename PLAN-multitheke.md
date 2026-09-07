@@ -1,7 +1,7 @@
 # Plan: Multi-Theken, Theken-Filterung & Kategorie-Navigation
 
-Status: **Planung abgeschlossen, Umsetzung noch nicht gestartet.**
-Stand: 2026-06-08 · Ausgangsversion: 2.10.4
+Status: **Vollständig umgesetzt** (Phasen 1–3, ausgeliefert mit v2.11.0–v2.13.1).
+Stand Planung: 2026-06-08 · Ausgangsversion: 2.10.4 · Status geprüft: 2026-09-07
 
 ## Ziel
 

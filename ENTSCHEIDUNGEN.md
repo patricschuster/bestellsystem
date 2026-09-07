@@ -7,9 +7,10 @@ als Ergänzung zu den bestehenden Einzel-Docs (`WEBSOCKET_UPGRADE.md`,
 den Gesamtzusammenhang. Erstellt am 2026-08-04 als Absicherung vor einem
 Claude-Account-Wechsel, damit der Werdegang nicht nur im Chatverlauf steckt.
 
-> ⚠️ Hinweis: `README.txt` ist veraltet (nennt v2.3.20). Die tatsächliche
-> Version laut `package.json` ist **v2.13.1**. Sollte bei Gelegenheit
-> aktualisiert werden.
+> ℹ️ Versionierung: Seit 2026-09-07 ist `package.json` die **einzige**
+> Versionsquelle. Server und Frontend leiten daraus ab, `scripts/check-version.js`
+> bricht den Docker-Build ab, wenn irgendwo eine Nummer hartcodiert wird.
+
 
 ## Überblick
 
@@ -132,6 +133,36 @@ produktiven Internet-Einsatz wäre ein CA-signiertes Zertifikat (z. B. Let's
 Encrypt) nötig — aktuell aber lokaler Netzwerkbetrieb auf dem Pi. Details:
 `HTTPS-SETUP.md`.
 
+### 6. Eine einzige Versionsquelle (2026-09-07)
+
+**Warum:** Die Versionsnummer stand an vier unabhängigen Stellen —
+`package.json`, `server.js` (Start-Log und `/health`), `state.version` in
+`public/app.js` sowie diverse Kommentarköpfe. Sie sind erwartungsgemäß
+auseinandergelaufen: Frontend zeigte 2.18.0, `/health` und Log meldeten
+2.13.1, Kommentarköpfe teils 2.9.8 und 2.10.0. Damit war `/health` als
+Deployment-Prüfung wertlos.
+
+**Entscheidung:** `package.json` ist die einzige Quelle.
+
+- `server.js` liest sie beim Start in `APP_VERSION` (ESM-tauglich per
+  `fs.readFileSync`, kein `require`) und nutzt sie für `/health` und die Logs.
+- Das Frontend hat keinen Build-Schritt und kann `package.json` nicht
+  importieren. Die generierte Route `/version.js` setzt daher
+  `window.__APP_VERSION__`; sie wird in `index.html` **vor** `app.js`
+  eingebunden, damit der Wert synchron bereitsteht und der Header nicht
+  flackert. `state.version` liest nur noch diese Variable.
+- Versionsnummern in Kommentarköpfen wurden ersatzlos entfernt — sie wurden
+  ohnehin nie mitgepflegt.
+- `scripts/check-version.js` sucht hartcodierte Versionen und bricht ab.
+
+**Warum der Wächter im Dockerfile als `RUN` läuft und nicht als npm-`prestart`:**
+Als `prestart` würde ein Fehlalarm den Container am Start hindern — im
+schlimmsten Fall mitten im Festbetrieb auf dem Pi. Als Build-Schritt greift er
+genauso zuverlässig (jedes Deployment läuft über `up --build`), ein Fehlschlag
+trifft aber den Entwicklungsrechner statt die Theke.
+
+**Bump ab jetzt:** `npm version <x.y.z> --no-git-tag-version`, sonst nichts.
+
 ## Deployment-Konvention
 
 Etabliertes Vorgehen (siehe `PLAN-multitheke.md`, gilt generell): **kein
@@ -144,12 +175,32 @@ Die SQLite-Datenbank wurde bewusst aus dem Git-Tracking entfernt (Commit
 die Produktivdaten auf dem Pi dürfen nicht durch einen Git-Pull überschrieben
 werden.
 
-## Offene Punkte (laut Docs, Stand dieser Zusammenfassung)
+## Offene Punkte (gegen den Code geprüft, Stand 2026-09-07)
 
-- `README.txt` aktualisieren (veraltete Versionsnummer).
-- Quick-Kommentar-Buttons und Kommentar-History im Admin-Bereich (siehe
-  Kommentar-Konzept) — geplant, aber noch nicht umgesetzt.
-- WebSocket-Heartbeat (Ping/Pong) und Disconnect-Benachrichtigung für den
-  User — als "optional" markiert, noch offen.
-- Für Internet-Betrieb (statt nur lokales Netzwerk): CA-signiertes
-  HTTPS-Zertifikat statt selbstsigniertem.
+Alles rund um die Kommentar-Funktion — der Freitext-Kommentar selbst läuft,
+die Komfort-Erweiterungen aus `KOMMENTAR-KONZEPT.md` fehlen:
+
+- **Quick-Kommentar-Buttons / Templates** (`[Allergie]`, `[eilig]`, …).
+  Umgesetzt ist nur das Freitext-Feld (`public/index.html:89`).
+- **Kommentar nachträglich bearbeiten** (vorgesehen: solange Status `open`).
+  Der Kommentar wird ausschließlich beim Anlegen geschrieben
+  (`server.js:677` und `server.js:908`), es gibt keinen Update-Pfad.
+- **Kommentar-History im Admin-Bereich** (alle Kommentare eines Tisches).
+  Kein UI vorhanden.
+
+Infrastruktur:
+
+- **CA-signiertes HTTPS-Zertifikat** statt selbstsigniertem — nur nötig, falls
+  das System jemals aus dem Internet erreichbar sein soll.
+- **`certs/` ist derzeit leer**, HTTPS läuft dadurch nicht (siehe Start-Log).
+  Damit ist auch der Wake Lock ohne Funktion, der das iPad-Display wach hält
+  (siehe Abschnitt 5). `generate-certs.bat` / `generate-certs.sh` liegen bereit.
+
+### Inzwischen erledigt (waren hier früher als offen gelistet)
+
+- ~~`README.txt` aktualisieren~~ — am 2026-09-07 neu geschrieben und bewusst
+  ohne Versionsnummer gehalten, damit sie nicht wieder veraltet.
+- ~~WebSocket-Heartbeat (Ping/Pong)~~ — implementiert, Ping alle 30 s
+  (`public/app.js:56-66`).
+- ~~Disconnect-Benachrichtigung für den User~~ — Status-Indikator im Header
+  (`public/app.js:187-188`).
