@@ -1,16 +1,45 @@
 :root{
+  /* Helles Schema. Jeder Farbwert ist ein Token, damit das dunkle Schema
+     weiter unten nur die Werte tauschen muss und keine Regel doppelt. */
   --bg:#f7f8fa;
   --surface:#fff;
+  --surface-2:#f7f8fa;
   --fg:#0b0c0e;
   --muted:#6b7280;
   --blue:#0a84ff;
   --green:#16a34a;
   --red:#e11d48;
   --card:#fbfbfd;
+  --border:#eee;
+  --border-strong:#e5e7eb;
+  --shadow:0 6px 16px rgba(0,0,0,.06);
+  --shadow-lg:0 8px 24px rgba(0,0,0,.06);
+  --btn-top:#fff;
+  --btn-bottom:#f3f5f8;
+  --overlay:rgba(0,0,0,.4);
+  --hairline:rgba(0,0,0,.14);
+  --grabber:rgba(0,0,0,.18);
+  --header-bg:rgba(255,255,255,.78);
+  --accent-soft:#f0f9ff;
+  --btn-border:rgba(0,0,0,.08);
+  /* Flaechen der Theken-Statusdarstellung (Admin-Option "Hintergrundfarben") */
+  --bg-open:#fff6f7;
+  --bg-ready:#f0fff4;
   --radius:16px;
   --tap:44px;
-  /* iOS PWA: Header-Höhe mit Safe-Area */
-  --hdr-h: max(60px, env(safe-area-inset-top));
+  /* iOS-Kurven: aussen immer groesser als innen, sonst wirkt der Rand gequetscht */
+  --radius-sheet:22px;
+  /* Apples Standard-Kurve fuer eintretende Elemente */
+  --ease-ios:cubic-bezier(.32,.72,0,1);
+  /* Hoehe der Bildschirmtastatur, gesetzt von trackKeyboardInset() in app.js */
+  --kb-inset: 0px;
+  /* iOS PWA: Statusleiste und Home-Indikator.
+     Liefern nur mit viewport-fit=cover im Viewport-Meta echte Werte. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* Header-Hoehe inklusive Statusleiste: der Header deckt sie mit ab, weil die
+     PWA mit black-translucent unter ihr liegt. */
+  --hdr-h: calc(60px + var(--safe-top));
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 .material-symbols-outlined{font-variation-settings:'FILL' 0,'wght' 400,'GRAD' 0,'opsz' 24;vertical-align:middle;font-size:20px}
@@ -43,7 +72,22 @@ body.lock-scroll{
   touch-action:pan-y;
 }
 .hidden{display:none!important}.text-center{text-align:center}.muted{color:var(--muted)}.small{font-size:12px}
-header#app-header{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:12px;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #eee;background:#fff}
+/* iOS-Navigationsleiste: transluzent mit Blur, haarfeine Trennlinie.
+   Der obere Innenabstand haelt den Inhalt aus der Statusleiste heraus. */
+header#app-header{
+  position:sticky;top:0;z-index:50;
+  display:flex;align-items:center;gap:12px;justify-content:space-between;
+  padding:10px 12px;
+  padding-top:calc(10px + var(--safe-top));
+  border-bottom:.5px solid var(--hairline);
+  background:var(--header-bg);
+  -webkit-backdrop-filter:saturate(180%) blur(20px);
+  backdrop-filter:saturate(180%) blur(20px);
+}
+/* Ohne Blur-Unterstuetzung deckend, damit nichts durchscheint */
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+  header#app-header{background:var(--surface)}
+}
 header .left{display:flex;align-items:center;gap:8px;min-width:0;flex:1}
 header .center{font-weight:700;flex:0 0 auto;text-align:center}
 header .right{display:flex;gap:8px;flex:1;justify-content:flex-end;align-items:center}
@@ -91,9 +135,9 @@ header .right button{position:relative}
 
 /* Threshold-Tabelle im Modal */
 .threshold-table{width:100%;border-collapse:collapse;font-size:14px}
-.threshold-table th,.threshold-table td{padding:8px 10px;text-align:left;border-bottom:1px solid #eee}
-.threshold-table th{font-weight:700;background:#fafafa}
-.threshold-table tr:hover td{background:#fafafa}
+.threshold-table th,.threshold-table td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--border)}
+.threshold-table th{font-weight:700;background:var(--surface-2);color:var(--fg)}
+.threshold-table tr:hover td{background:var(--surface-2)}
 
 /* iOS PWA: Theke füllt Viewport unter Header */
 #view-theke{
@@ -106,7 +150,7 @@ header .right button{position:relative}
   /* Safe-Area für Home Indicator */
   padding-bottom:env(safe-area-inset-bottom);
 }
-button{min-height:var(--tap);padding:10px 14px;border-radius:12px;cursor:pointer;border:1px solid rgba(0,0,0,.08);background:linear-gradient(#fff,#f3f5f8);font-weight:700}
+button{min-height:var(--tap);padding:10px 14px;border-radius:12px;cursor:pointer;border:1px solid rgba(0,0,0,.08);background:linear-gradient(var(--btn-top),var(--btn-bottom));font-weight:700}
 button.primary{color:#fff;background:linear-gradient(#1990ff,#0a84ff);border-color:#0a84ff}
 #btn-send-header{padding-left:40px;padding-right:40px}
 button.ghost{background:transparent}
@@ -114,58 +158,63 @@ button.outline{border:1px solid rgba(0,0,0,.2)}
 button:disabled{opacity:.5;cursor:not-allowed}
 .card.login{max-width:420px;margin:8vh auto 0;background:var(--card);padding:20px;border-radius:var(--radius);box-shadow:0 8px 24px rgba(0,0,0,.06)}
 .role-switch{display:flex;gap:10px;margin-bottom:14px}
-.role-switch .role{flex:1;min-height:var(--tap);border:2px solid #e5e7eb;background:#fff}
+.role-switch .role{flex:1;min-height:var(--tap);border:2px solid var(--border-strong);background:var(--surface)}
 .role-switch .role.active{background:var(--blue);color:#fff;border-color:#0a84ff}
 label{display:block;font-size:12px;color:var(--muted);margin:6px 0}
-input, select, textarea{width:100%;min-height:var(--tap);padding:10px 12px;border:1px solid #e5e7eb;border-radius:12px;font-family:inherit;font-size:16px}
+input, select, textarea{width:100%;min-height:var(--tap);padding:10px 12px;border:1px solid var(--border-strong);border-radius:12px;font-family:inherit;font-size:16px;background:var(--surface);color:var(--fg)}
 textarea{resize:vertical;min-height:80px}
 .field{margin-bottom:16px}
 .grid.tables{--cols:4;display:grid;grid-template-columns:repeat(var(--cols),minmax(0,1fr));gap:12px}
-.grid.tables .table-btn{position:relative;display:flex;align-items:center;justify-content:center;height:96px;background:#fff;border:1px solid #eee;border-radius:14px;font-weight:800;font-size:20px;box-shadow:0 6px 16px rgba(0,0,0,.06);user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.grid.tables .table-btn{position:relative;display:flex;align-items:center;justify-content:center;height:96px;background:var(--surface);border:1px solid var(--border);border-radius:14px;font-weight:800;font-size:20px;box-shadow:0 6px 16px rgba(0,0,0,.06);user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
 .grid.tables .dot{position:absolute;top:10px;right:10px;width:10px;height:10px;background:var(--blue);border-radius:999px;box-shadow:0 0 0 4px rgba(10,132,255,.15)}
 .grid.products{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:10px;width:100%}
 @media (max-width: 380px){ .grid.products{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px} .product-btn.product-v1 .topbar{left:4px;right:4px}}
-.product-btn{position:relative;display:flex;align-items:center;justify-content:center;text-align:center;min-height:96px;padding:12px 8px;background:#fff;border:1px solid #eee;border-radius:14px;box-shadow:0 6px 16px rgba(0,0,0,.06);touch-action:manipulation}
+.product-btn{position:relative;display:flex;align-items:center;justify-content:center;text-align:center;min-height:96px;padding:12px 8px;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 6px 16px rgba(0,0,0,.06);touch-action:manipulation}
 .product-btn .name{font-size:16px;font-weight:700;line-height:1.15;white-space:normal;word-break:break-word;overflow-wrap:anywhere;padding:0 6px}
 .product-btn .price{display:none}
 .product-btn.product-v1{padding-top:34px}
 .product-btn.product-v1 .topbar{position:absolute;left:6px;right:6px;top:6px;display:flex;justify-content:space-between;align-items:center;height:30px;padding:0}
 .product-btn.product-v1 .topbar .minus{margin-right:auto}
 .product-btn.product-v1 .topbar .badge{margin-left:auto}
-.product-btn .minus{position:relative;width:30px;height:30px;min-height:30px;background:transparent;border:none;appearance:none;-webkit-appearance:none;outline:none;box-shadow:none;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:0}
-.product-btn .minus::after{content:"";position:absolute;inset:0;margin:auto;width:24px;height:24px;border-radius:999px;background:transparent;border:1px solid #e5e7eb;z-index:0}
-.product-btn .minus::before{content:"";position:absolute;inset:0;margin:auto;width:12px;height:3px;background:#111;border-radius:2px;z-index:1}
+/* color:inherit ist noetig: Browser setzen fuer button die Systemfarbe
+   buttontext, die im dunklen Schema hell wird. Der Minus-Strich sitzt aber auf
+   der hellen Produktfarbe der Kachel und muss deren Kontrastfarbe erben. */
+.product-btn .minus{position:relative;width:30px;height:30px;min-height:30px;background:transparent;border:none;appearance:none;-webkit-appearance:none;outline:none;box-shadow:none;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:0;color:inherit}
+.product-btn .minus::after{content:"";position:absolute;inset:0;margin:auto;width:24px;height:24px;border-radius:999px;background:transparent;border:1px solid currentColor;opacity:.35;z-index:0}
+/* Minus-Strich folgt der Textfarbe der Kachel: bei Produktfarbe setzt
+   applyProductColor() den passenden Kontrast, sonst erbt er --fg. */
+.product-btn .minus::before{content:"";position:absolute;inset:0;margin:auto;width:12px;height:3px;background:currentColor;border-radius:2px;z-index:1}
 .product-btn .badge{width:24px;height:24px;line-height:24px;border-radius:999px;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700}
 /* Bedieneransicht: Mengen-Badge um 50% vergrößert */
 .grid.products .product-btn .badge{width:36px;height:36px;font-size:21px}
 .grid.products .product-btn.product-v1{padding-top:52px}
 .grid.products .product-btn.product-v1 .topbar{height:45px}
-.sticky-footer{position:sticky;bottom:8px;margin-top:12px;display:flex;justify-content:space-between;gap:8px;background:rgba(255,255,255,.85);border:1px solid #eee;padding:8px 10px;border-radius:14px;backdrop-filter:blur(6px)}
-.cash-card{background:#fff;border:1px solid #eee;border-radius:14px;box-shadow:0 6px 16px rgba(0,0,0,.06);padding:15px}
+.sticky-footer{position:sticky;bottom:8px;margin-top:12px;display:flex;justify-content:space-between;gap:8px;background:rgba(255,255,255,.85);border:1px solid var(--border);padding:8px 10px;border-radius:14px;backdrop-filter:blur(6px)}
+.cash-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 6px 16px rgba(0,0,0,.06);padding:15px}
 .cash-card .row{display:flex;align-items:center;justify-content:space-between}
 .icon-btn{min-height:auto;padding:8px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center}
 .cash-detail-items{display:flex;flex-direction:column;gap:10px;margin-bottom:20px}
-.cash-detail-item{background:#fff;border:2px solid #eee;border-radius:12px;padding:12px;display:flex;justify-content:space-between;cursor:pointer;transition:all 0.2s}
+.cash-detail-item{background:var(--surface);border:2px solid var(--border);border-radius:12px;padding:12px;display:flex;justify-content:space-between;cursor:pointer;transition:all 0.2s}
 .cash-detail-item:hover{border-color:#0a84ff}
-.cash-detail-item.selected{background:#e6f3ff;border-color:#0a84ff}
-.cash-detail-summary{background:#f7f8fa;border-radius:12px;padding:16px;margin-bottom:16px}
+.cash-detail-item.selected{background:var(--accent-soft);border-color:var(--blue)}
+.cash-detail-summary{background:var(--surface-2);border-radius:12px;padding:16px;margin-bottom:16px}
 .cash-detail-summary .summary-row{display:flex;justify-content:space-between;padding:8px 0;align-items:center}
-.cash-detail-summary .summary-row.total{border-top:2px solid #ddd;margin-top:8px;padding-top:12px;font-size:18px}
-.change-to-pay{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:12px 16px;background:#f7f8fa;border-radius:10px;margin-bottom:16px}
+.cash-detail-summary .summary-row.total{border-top:2px solid var(--border-strong);margin-top:8px;padding-top:12px;font-size:18px}
+.change-to-pay{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:12px 16px;background:var(--surface-2);border-radius:10px;margin-bottom:16px}
 .change-to-pay .muted{font-size:14px}
 .change-to-pay strong{font-size:24px;color:var(--fg)}
-.change-to-pay input{text-align:right;font-size:24px;font-weight:700;border:2px solid #e5e7eb;padding:8px 12px;min-height:48px;border-radius:10px;background:#fff;width:150px}
+.change-to-pay input{text-align:right;font-size:24px;font-weight:700;border:2px solid var(--border-strong);padding:8px 12px;min-height:48px;border-radius:10px;background:var(--surface);width:150px}
 .change-to-pay input:focus{outline:none;border-color:#0a84ff}
 .change-to-pay span{font-size:24px;font-weight:700;color:var(--fg)}
 .change-input-row{display:flex;align-items:center;gap:8px;margin-bottom:12px}
 .change-input-row label{margin:0;font-weight:700;font-size:14px;color:var(--fg)}
-.change-input-row input{flex:1;text-align:right;font-size:18px;font-weight:700;border:2px solid #e5e7eb;padding:10px 12px;min-height:48px;border-radius:10px}
+.change-input-row input{flex:1;text-align:right;font-size:18px;font-weight:700;border:2px solid var(--border-strong);padding:10px 12px;min-height:48px;border-radius:10px}
 .change-input-row input:focus{outline:none;border-color:#0a84ff}
 .change-input-row button{min-height:36px;padding:6px 10px}
 .change-quick-btns{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
-.change-quick-btn{flex:1;min-width:70px;min-height:48px;background:#f0f9ff;border:2px solid #0a84ff;color:#0a84ff;font-weight:700;font-size:16px;border-radius:10px;transition:all 0.2s}
+.change-quick-btn{flex:1;min-width:70px;min-height:48px;background:var(--accent-soft);border:2px solid var(--blue);color:var(--blue);font-weight:700;font-size:16px;border-radius:10px;transition:all 0.2s}
 .change-quick-btn:hover,.change-quick-btn:active{background:#0a84ff;color:#fff;transform:scale(1.05)}
-.change-result{display:flex;align-items:center;gap:8px;padding:16px;background:#f0f9ff;border-radius:10px;justify-content:center}
+.change-result{display:flex;align-items:center;gap:8px;padding:16px;background:var(--accent-soft);border-radius:10px;justify-content:center}
 .change-result .material-symbols-outlined{font-size:28px;color:#0a84ff}
 .change-result span{font-size:16px;color:var(--muted)}
 .change-result strong{font-size:28px;font-weight:800;color:#0a84ff}
@@ -180,11 +229,11 @@ textarea{resize:vertical;min-height:80px}
 .hybrid-layout{display:grid;height:calc(100vh - 60px);gap:10px;padding:5px 10px 10px 10px;overflow:hidden;box-sizing:border-box}
 .hybrid-layout.split-30-70{grid-template-columns:30% 70%}
 .hybrid-layout.split-50-50{grid-template-columns:50% 50%}
-.bediener-column{overflow-y:auto;border-right:2px solid #eee;padding-right:8px;padding-top:0;display:flex;flex-direction:column;gap:12px}
+.bediener-column{overflow-y:auto;border-right:2px solid var(--border);padding-right:8px;padding-top:0;display:flex;flex-direction:column;gap:12px}
 
 /* Bei mehreren Bedienern: 50/50 Aufteilung innerhalb der Bediener-Spalte */
 .bediener-column.multi-waiter{flex-direction:row;overflow-x:hidden;overflow-y:hidden}
-.bediener-column.multi-waiter .theke-col{width:50%!important;border-right:1px solid #eee;padding-right:12px;overflow-y:auto}
+.bediener-column.multi-waiter .theke-col{width:50%!important;border-right:1px solid var(--border);padding-right:12px;overflow-y:auto}
 .bediener-column.multi-waiter .theke-col:last-child{border-right:none;padding-right:0;padding-left:12px}
 
 /* Ab 3 Spalten (2 Bedienungen + POS): Kompakteres Layout */
@@ -218,7 +267,7 @@ textarea{resize:vertical;min-height:80px}
   overflow-y: auto;
   overflow-x: hidden;
   padding: 8px;
-  background: #fafafa;
+  background: var(--bg);
   -webkit-overflow-scrolling: touch;
 }
 
@@ -278,8 +327,8 @@ textarea{resize:vertical;min-height:80px}
   flex-direction:column;
   gap:6px;
   overflow:hidden;
-  background:#fff;
-  border:1px solid #eee;
+  background:var(--surface);
+  border:1px solid var(--border);
   border-radius:12px;
   padding:10px 12px 12px 12px;
   min-height:130px;
@@ -309,13 +358,13 @@ textarea{resize:vertical;min-height:80px}
   display:flex;
   justify-content:space-between;
   padding:6px 0;
-  border-bottom:1px solid #eee;
+  border-bottom:1px solid var(--border);
 }
 .pos-checkout-area .pos-total{
   display:flex;
   justify-content:space-between;
   padding:12px 0 8px 0;
-  border-top:2px solid #ddd;
+  border-top:2px solid var(--border-strong);
   margin-top:auto;
   flex-shrink:0;
 }
@@ -359,15 +408,15 @@ textarea{resize:vertical;min-height:80px}
   /* Verhindert Parent-Scroll am Ende */
   overscroll-behavior:contain;
 }
-.theke-col .col-title{position:sticky;top:0;z-index:10;text-align:center;font-weight:800;border:1px solid #eee;padding:6px 8px;background:#fff;border-radius:12px;box-shadow:0 6px 16px rgba(0,0,0,.06);margin-bottom:8px}
-.order-card{background:#fff;border:1px solid #eee;border-radius:14px;padding:12px;box-shadow:0 6px 16px rgba(0,0,0,.06);container-type:inline-size}
-.order-card.bg-open{background:#fff6f7}
-.order-card.bg-ready{background:#f0fff4}
+.theke-col .col-title{position:sticky;top:0;z-index:10;text-align:center;font-weight:800;border:1px solid var(--border);padding:6px 8px;background:var(--surface);border-radius:12px;box-shadow:0 6px 16px rgba(0,0,0,.06);margin-bottom:8px}
+.order-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:12px;box-shadow:0 6px 16px rgba(0,0,0,.06);container-type:inline-size}
+.order-card.bg-open{background:var(--bg-open)}
+.order-card.bg-ready{background:var(--bg-ready)}
 .order-card .row{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .order-card .meta{display:flex;align-items:center;gap:8px}
 .order-card .time{color:var(--muted);font-size:12px}
 .order-card .items{display:flex;flex-direction:column;gap:9px;margin-top:8px}
-.order-card .item{border:1px solid #eee;border-radius:8px;padding:9px 10px;cursor:pointer;min-height:82.5px;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;font-size:16px;font-weight:700;line-height:1.15;word-wrap:break-word;overflow-wrap:break-word;hyphens:auto}
+.order-card .item{border:1px solid var(--border);border-radius:8px;padding:9px 10px;cursor:pointer;min-height:82.5px;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;font-size:16px;font-weight:700;line-height:1.15;word-wrap:break-word;overflow-wrap:break-word;hyphens:auto}
 /* bereit: gleiches Gruen wie der POS:AN-Button im Header */
 .order-card .item.ready{background:var(--green);border-color:var(--green);color:#fff}
 /* Kommentar-Zeile erbt die Textfarbe, damit sie auf farbigem Grund lesbar bleibt */
@@ -377,7 +426,7 @@ textarea{resize:vertical;min-height:80px}
 .order-card .status.open{background:#e11d48}
 .order-card .status.ready{background:#16a34a}
 /* POS-Karte: Gesamtbetrag, optisch an .pos-total im Checkout angelehnt */
-.order-card .card-total{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px;padding-top:8px;border-top:2px solid #eee;font-size:15px;color:var(--muted)}
+.order-card .card-total{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px;padding-top:8px;border-top:2px solid var(--border);font-size:15px;color:var(--muted)}
 .order-card .card-total strong{font-size:19px;color:var(--fg)}
 /* Schmale Spalte (z.B. POS-Hybrid mit geteilter Bediener-Spalte): kein Platz fuer
    Label + Betrag nebeneinander -> "Gesamt" weg, Betrag mittig. Ohne Container-Query-
@@ -397,47 +446,47 @@ textarea{resize:vertical;min-height:80px}
 /* Storno-Buttons */
 .btn-cancel-order{color:#dc2626}
 .btn-cancel-order:hover{background:#fee2e2;border-color:#dc2626}
-.btn-cancel-item{background:none;border:1px solid #e5e7eb;color:#dc2626;font-size:18px;font-weight:700;width:32px;height:32px;min-height:32px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;line-height:1}
+.btn-cancel-item{background:none;border:1px solid var(--border-strong);color:#dc2626;font-size:18px;font-weight:700;width:32px;height:32px;min-height:32px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;line-height:1}
 .btn-cancel-item:hover{background:#fee2e2;border-color:#dc2626}
 .order-action-btn::before{content:'';position:absolute;top:-8.8px;bottom:-8.8px;left:-8.8px;right:-8.8px}
 .admin-tabs{display:flex;gap:8px;margin-bottom:12px}
 .admin-tabs .tab{flex:1}
-.admin-section .admin-card{background:#fff;border:1px solid #eee;border-radius:14px;box-shadow:0 6px 16px rgba(0,0,0,.06);padding:12px;margin-bottom:12px}
+.admin-section .admin-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 6px 16px rgba(0,0,0,.06);padding:12px;margin-bottom:12px}
 .admin-row{display:grid;grid-template-columns:1fr;gap:12px}
 @media (min-width:900px){.admin-row{grid-template-columns:1fr 1fr}}
 .admin-row > *{min-width:0}
 #system-logs{word-break:break-word;overflow-wrap:anywhere}
 .inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .prod-table, .rep-table{width:100%;border-collapse:collapse}
-.rep-table th, .rep-table td{border-bottom:1px solid #eee;padding:8px;text-align:left}
+.rep-table th, .rep-table td{border-bottom:1px solid var(--border);padding:8px;text-align:left}
 /* Produkttabelle: Original-Optik (grosse Buttons), nur horizontal scrollbar bei vielen Spalten */
 .prod-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
-.prod-table th, .prod-table td{border-bottom:1px solid #eee;padding:8px;text-align:left;white-space:nowrap}
+.prod-table th, .prod-table td{border-bottom:1px solid var(--border);padding:8px;text-align:left;white-space:nowrap}
 .prod-table input[data-k="name"]{min-width:130px}
 .prod-table input[data-k="price"]{width:80px}
 .prod-table input[type="checkbox"]{width:24px;height:24px;min-height:24px;accent-color:var(--blue)}
 .btn-up, .btn-down, .btn-del{min-width:36px;padding:4px 8px}
 /* Produkt-Farbauswahl: Dropdown nur mit Favoritenfarben, Feld in gewaehlter Farbe */
 .color-select{min-width:110px;font-weight:600}
-.color-select option{background:#fff;color:#0b0c0e}
+.color-select option{background:var(--surface);color:#0b0c0e}
 
 /* Kategorie-Navigation: Kacheln im Auswahlgrid (zweistufig) */
 .product-btn.category-tile, .product-btn.category-back{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;cursor:pointer;padding-top:12px}
-.product-btn.category-tile{background:linear-gradient(#ffffff,#eef2f7);border-color:rgba(10,132,255,.25)}
+.product-btn.category-tile{background:linear-gradient(var(--btn-top),var(--btn-bottom));border-color:rgba(10,132,255,.25)}
 .product-btn.category-tile .name{font-size:19px;font-weight:800;line-height:1.15}
 .product-btn.category-tile .cat-count{font-size:13px;color:var(--muted);font-weight:600}
-.product-btn.category-back{background:linear-gradient(#f3f5f8,#e6eaef)}
+.product-btn.category-back{background:linear-gradient(var(--btn-bottom),var(--btn-bottom))}
 .product-btn.category-back .material-symbols-outlined{font-size:30px}
 .product-btn.category-back .name{font-weight:700}
 
 /* Produkt-Theke: Mehrfachauswahl als kompaktes Popover (<details>) */
 .theke-multi{position:relative;min-width:90px}
-.theke-multi>summary{cursor:pointer;list-style:none;padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px}
+.theke-multi>summary{cursor:pointer;list-style:none;padding:8px 10px;border:1px solid var(--border-strong);border-radius:10px;background:var(--surface);font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px}
 .theke-multi>summary::-webkit-details-marker{display:none}
 .theke-multi[open]>summary{border-color:var(--blue)}
-.theke-multi .theke-opts{position:absolute;z-index:20;top:calc(100% + 4px);left:0;min-width:160px;max-height:240px;overflow-y:auto;background:#fff;border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);padding:6px}
+.theke-multi .theke-opts{position:absolute;z-index:20;top:calc(100% + 4px);left:0;min-width:160px;max-height:240px;overflow-y:auto;background:var(--surface);border:1px solid var(--border-strong);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);padding:6px}
 .theke-multi .theke-opts label{display:flex;align-items:center;gap:8px;padding:6px 8px;font-size:14px;cursor:pointer;white-space:nowrap;color:var(--fg)}
-.theke-multi .theke-opts label:hover{background:#f3f5f8;border-radius:6px}
+.theke-multi .theke-opts label:hover{background:var(--surface-2);border-radius:6px}
 .theke-multi .theke-opts input{width:auto;min-height:auto;margin:0}
 
 /* Login-Logo in der Karte - responsiv */
@@ -581,8 +630,8 @@ textarea{resize:vertical;min-height:80px}
   }
 }
 .pos-summary{
-  background:#fff;
-  border:1px solid #eee;
+  background:var(--surface);
+  border:1px solid var(--border);
   border-radius:14px;
   padding:16px;
   display:flex;
@@ -603,7 +652,7 @@ textarea{resize:vertical;min-height:80px}
   justify-content:space-between;
   align-items:center;
   padding:10px 12px;
-  background:#f7f8fa;
+  background:var(--surface-2);
   border-radius:8px;
   gap:8px;
 }
@@ -612,8 +661,8 @@ textarea{resize:vertical;min-height:80px}
   justify-content:space-between;
   align-items:center;
   padding:16px 0;
-  border-top:2px solid #eee;
-  border-bottom:2px solid #eee;
+  border-top:2px solid var(--border);
+  border-bottom:2px solid var(--border);
   margin-bottom:16px;
 }
 .pos-actions{
@@ -653,11 +702,11 @@ textarea{resize:vertical;min-height:80px}
   flex-direction:column;
   gap:6px;
   padding-top:8px;
-  border-top:1px solid #eee;
+  border-top:1px solid var(--border);
 }
 .pos-history-list .cash-card .items .item{
   padding:6px 10px;
-  background:#f7f8fa;
+  background:var(--surface-2);
   border-radius:6px;
   font-size:14px;
   border:none;
@@ -718,40 +767,64 @@ textarea{resize:vertical;min-height:80px}
   font-variation-settings:'FILL' 1,'wght' 400,'GRAD' 0,'opsz' 24;
 }
 
-/* Favorites Settings Modal */
+/* =============================================================================
+   MODALS ALS BOTTOM-SHEETS (iOS-Formensprache)
+   Fahren von unten ein, sitzen am unteren Rand, nur oben abgerundet, mit
+   Griffleiste. Auf breiten Displays zentriert statt randlos, wie iPadOS es
+   bei kompakten Sheets macht.
+   ============================================================================= */
 .modal{
   position:fixed;
-  top:0;
-  left:0;
-  right:0;
-  bottom:0;
-  background:rgba(0,0,0,.5);
+  inset:0;
+  background:var(--overlay);
+  -webkit-backdrop-filter:blur(3px);
+  backdrop-filter:blur(3px);
   display:flex;
-  align-items:center;
+  align-items:flex-end;
   justify-content:center;
   z-index:999;
-  padding:16px;
+  padding:0;
+  animation:backdrop-in .3s ease both;
 }
 .modal-content{
-  background:#fff;
-  border-radius:16px;
-  box-shadow:0 8px 32px rgba(0,0,0,.2);
-  max-width:500px;
+  position:relative;
+  background:var(--surface);
+  border-radius:var(--radius-sheet) var(--radius-sheet) 0 0;
+  box-shadow:0 -4px 40px rgba(0,0,0,.18);
+  max-width:560px;
   width:100%;
-  max-height:80vh;
+  max-height:min(88vh,88dvh);
+  max-height:calc(min(88vh,88dvh) - var(--kb-inset));
+  margin-bottom:var(--kb-inset);
   display:flex;
   flex-direction:column;
+  padding-bottom:var(--safe-bottom);
+  animation:sheet-in .42s var(--ease-ios) both;
 }
+/* Griffleiste: rein dekorativ, signalisiert "von unten eingefahren" */
+.modal-content::before{
+  content:'';
+  position:absolute;
+  top:8px;left:50%;
+  width:36px;height:5px;
+  margin-left:-18px;
+  border-radius:999px;
+  background:var(--grabber);
+  pointer-events:none;
+}
+@keyframes sheet-in{from{transform:translateY(100%)}to{transform:translateY(0)}}
+@keyframes backdrop-in{from{opacity:0}to{opacity:1}}
 .modal-header{
   display:flex;
   align-items:center;
   justify-content:space-between;
-  padding:16px 20px;
-  border-bottom:1px solid #eee;
+  padding:22px 20px 12px;
+  border-bottom:.5px solid var(--hairline);
 }
 .modal-header h3{
   margin:0;
-  font-size:18px;
+  font-size:19px;
+  letter-spacing:-.01em;
 }
 .modal-header button{
   min-height:36px;
@@ -760,13 +833,15 @@ textarea{resize:vertical;min-height:80px}
 .modal-body{
   flex:1;
   overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
+  overscroll-behavior:contain;
   padding:16px 20px;
 }
 .modal-footer{
   display:flex;
   gap:12px;
-  padding:16px 20px;
-  border-top:1px solid #eee;
+  padding:12px 20px 16px;
+  border-top:.5px solid var(--hairline);
 }
 .modal-footer button{
   flex:1;
@@ -776,7 +851,7 @@ textarea{resize:vertical;min-height:80px}
   align-items:center;
   gap:12px;
   padding:12px;
-  border-bottom:1px solid #eee;
+  border-bottom:1px solid var(--border);
 }
 .fav-setting-item:last-child{
   border-bottom:none;
@@ -802,7 +877,7 @@ textarea{resize:vertical;min-height:80px}
   align-items:center;
   justify-content:space-between;
   padding:14px;
-  border-bottom:1px solid #eee;
+  border-bottom:1px solid var(--border);
   gap:12px;
 }
 .waiter-item:last-child{
@@ -871,9 +946,14 @@ textarea{resize:vertical;min-height:80px}
 
 /* Kleine Displays Querformat (z.B. iPhone SE landscape, kleine Tablets) */
 @media (max-height:500px) and (orientation:landscape){
+  /* Header ist hier flacher: Hoehen-Variable mitziehen, sonst verschenkt die
+     Theke genau die Differenz an ungenutzter Flaeche. 44px + 5px Abstand. */
+  :root{ --hdr-h: calc(49px + var(--safe-top)); }
   header#app-header{
     padding:4px 8px;
-    min-height:44px;
+    /* Kurzschreibweise oben wuerde die Statusleisten-Kompensation ueberschreiben */
+    padding-top:calc(4px + var(--safe-top));
+    min-height:calc(44px + var(--safe-top));
     margin-bottom:5px;
   }
   header#app-header button{
@@ -917,9 +997,13 @@ textarea{resize:vertical;min-height:80px}
 
 /* Tablets Querformat - 2 Reihen optimal */
 @media (min-height:501px) and (max-height:800px) and (orientation:landscape){
+  /* dito: 48px Header + 5px Abstand (betrifft u.a. iPad Pro 11 quer) */
+  :root{ --hdr-h: calc(53px + var(--safe-top)); }
   header#app-header{
     padding:5px 10px;
-    min-height:48px;
+    /* Kurzschreibweise oben wuerde die Statusleisten-Kompensation ueberschreiben */
+    padding-top:calc(5px + var(--safe-top));
+    min-height:calc(48px + var(--safe-top));
     margin-bottom:5px;
   }
   header#app-header button{
@@ -1000,3 +1084,424 @@ textarea{resize:vertical;min-height:80px}
   color:#fff;
   border-color:var(--blue);
 }
+/* =============================================================================
+   DIALOG-SHEETS (Ersatz fuer alert/confirm)
+   Von uiAlert()/uiConfirm() in app.js erzeugt. Eigene Klassen statt .modal,
+   weil diese Sheets dynamisch kommen und gehen und daher beide Richtungen
+   animieren koennen.
+   ============================================================================= */
+.sheet-host{
+  position:fixed;
+  inset:0;
+  z-index:1200;
+  display:flex;
+  align-items:flex-end;
+  justify-content:center;
+}
+.sheet-backdrop{
+  position:absolute;
+  inset:0;
+  background:var(--overlay);
+  -webkit-backdrop-filter:blur(3px);
+  backdrop-filter:blur(3px);
+  opacity:0;
+  transition:opacity .3s ease;
+}
+.sheet-host.sheet-open .sheet-backdrop{opacity:1}
+.sheet{
+  position:relative;
+  width:100%;
+  max-width:480px;
+  margin:0 8px calc(8px + var(--kb-inset));
+  background:var(--surface);
+  border-radius:var(--radius-sheet);
+  box-shadow:0 -4px 40px rgba(0,0,0,.22);
+  padding-bottom:var(--safe-bottom);
+  transform:translateY(calc(100% + 16px));
+  transition:transform .42s var(--ease-ios);
+  overflow:hidden;
+}
+.sheet-host.sheet-open .sheet{transform:translateY(0)}
+.sheet-grabber{
+  width:36px;height:5px;
+  margin:8px auto 0;
+  border-radius:999px;
+  background:var(--grabber);
+}
+.sheet-body{padding:18px 22px 6px;text-align:center}
+.sheet-title{
+  font-size:18px;
+  font-weight:700;
+  letter-spacing:-.01em;
+  margin-bottom:6px;
+}
+.sheet-message{
+  font-size:15px;
+  line-height:1.4;
+  color:var(--muted);
+}
+/* Leerer Titel: die Meldung tritt an seine Stelle */
+.sheet-body .sheet-message:only-child{
+  color:var(--fg);
+  font-weight:600;
+  font-size:16px;
+}
+.sheet-actions{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  padding:16px 16px 16px;
+}
+.sheet-btn{
+  width:100%;
+  min-height:50px;
+  border-radius:14px;
+  border:none;
+  font-size:17px;
+  font-weight:600;
+  background:var(--surface-2);
+  color:var(--fg);
+  transition:transform .12s ease, filter .12s ease;
+}
+.sheet-btn.primary{
+  background:var(--blue);
+  color:#fff;
+  font-weight:700;
+}
+.sheet-btn.destructive{
+  background:#ff3b30;
+  color:#fff;
+  font-weight:700;
+}
+.sheet-btn.cancel{
+  background:var(--surface-2);
+  color:var(--fg);
+}
+.sheet-btn:active{transform:scale(.97);filter:brightness(.94)}
+/* Zwei Aktionen passen nebeneinander, Abbrechen zuerst wie in iOS-Alerts */
+@media (min-width:380px){
+  .sheet-actions{flex-direction:row}
+  .sheet-btn{flex:1}
+}
+
+/* =============================================================================
+   TAP-FEEDBACK
+   Jedes Tap-Ziel muss beim Druck sofort reagieren, unabhaengig davon wie
+   lange der Server braucht. Kurze Dauer, damit es nicht traege wirkt.
+   ============================================================================= */
+button,
+.table-btn,
+.product-btn,
+.order-card .item,
+.cash-detail-item,
+.fav-setting-item,
+.station-select-item,
+.pos-item{
+  transition:transform .12s ease, filter .12s ease, background-color .15s ease;
+}
+button:active:not(:disabled),
+.table-btn:active,
+.cash-detail-item:active,
+.station-select-item:active{
+  transform:scale(.97);
+  filter:brightness(.95);
+}
+/* Kacheln reagieren etwas deutlicher, sie sind die Hauptziele */
+.product-btn:active,
+.order-card .item:active{
+  transform:scale(.955);
+  filter:brightness(.94);
+}
+/* Long-Press laeuft: erst die schnelle Antwort auf den Druck, dann ein
+   langsames Weiterschrumpfen bis der Long-Press feuert. So fuehlt sich ein
+   kurzer Tipp sofort an und eine gehaltene Kachel zeigt, dass noch was kommt.
+   Dauer passt zur Schwelle in bindLongPress(). */
+.table-btn.pressing,
+.product-btn.pressing{
+  animation:press-hold .5s cubic-bezier(.4,0,.6,1) forwards;
+}
+@keyframes press-hold{
+  0%{transform:scale(1)}
+  14%{transform:scale(.962)}
+  100%{transform:scale(.925)}
+}
+/* Kein Hover-Zoom auf Touch-Geraeten, das bleibt sonst nach dem Tap haengen */
+@media (hover:none){
+  .station-product:hover{transform:none;box-shadow:0 6px 16px rgba(0,0,0,.06)!important}
+  .cash-detail-item:hover{border-color:var(--border)}
+}
+/* Kein Doppeltipp-Zoom-Delay auf Tap-Zielen */
+button,.table-btn,.product-btn,.order-card .item,.cash-detail-item{touch-action:manipulation}
+
+/* =============================================================================
+   TOAST: iOS-Pille mit Blur statt flacher Box
+   ============================================================================= */
+.notification-toast{
+  top:calc(var(--safe-top) + 70px);
+  /* ueber Sheets, damit eine Rueckmeldung nie verdeckt wird */
+  z-index:1300;
+  border-radius:999px;
+  padding:12px 22px;
+  font-weight:600;
+  font-size:15px;
+  box-shadow:0 8px 28px rgba(0,0,0,.22);
+  -webkit-backdrop-filter:blur(12px);
+  backdrop-filter:blur(12px);
+  max-width:calc(100vw - 32px);
+  text-align:center;
+}
+.notification-toast.success{background:rgba(22,163,74,.94)}
+.notification-toast.warning{background:rgba(249,115,22,.94)}
+.notification-toast.info{background:rgba(2,132,199,.94)}
+
+/* =============================================================================
+   BEWEGUNG REDUZIEREN: Systemeinstellung respektieren
+   ============================================================================= */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}
+}
+
+/* =============================================================================
+   DUNKLES SCHEMA
+   Nur Token-Werte werden getauscht, keine Regel doppelt sich. Drei Bloecke:
+   System-Einstellung als Vorgabe, plus je ein Block fuer die manuelle Wahl,
+   damit der Schalter in beide Richtungen gewinnt.
+   Grautoene folgen iOS: schwarzer Grund, #1c1c1e fuer Flaechen darueber.
+   ============================================================================= */
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#000;
+    --surface:#1c1c1e;
+    --surface-2:#2c2c2e;
+    --fg:#f5f5f7;
+    --muted:#98989f;
+    --card:#1c1c1e;
+    --border:#38383a;
+    --border-strong:#48484a;
+    --shadow:0 6px 16px rgba(0,0,0,.5);
+    --shadow-lg:0 8px 24px rgba(0,0,0,.6);
+    --btn-top:#2c2c2e;
+    --btn-bottom:#1f1f21;
+    --overlay:rgba(0,0,0,.6);
+    --hairline:rgba(255,255,255,.14);
+    --grabber:rgba(255,255,255,.3);
+    --header-bg:rgba(28,28,30,.8);
+    --accent-soft:#0a2540;
+    --btn-border:rgba(255,255,255,.14);
+    --bg-open:#2a1a1d;
+    --bg-ready:#13291a;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#000;
+  --surface:#1c1c1e;
+  --surface-2:#2c2c2e;
+  --fg:#f5f5f7;
+  --muted:#98989f;
+  --card:#1c1c1e;
+  --border:#38383a;
+  --border-strong:#48484a;
+  --shadow:0 6px 16px rgba(0,0,0,.5);
+  --shadow-lg:0 8px 24px rgba(0,0,0,.6);
+  --btn-top:#2c2c2e;
+  --btn-bottom:#1f1f21;
+  --overlay:rgba(0,0,0,.6);
+  --hairline:rgba(255,255,255,.14);
+  --grabber:rgba(255,255,255,.3);
+  --header-bg:rgba(28,28,30,.8);
+  --accent-soft:#0a2540;
+  --btn-border:rgba(255,255,255,.14);
+  --bg-open:#2a1a1d;
+  --bg-ready:#13291a;
+  color-scheme:dark;
+}
+
+/* Im Dunkeln braucht der Knopfrand mehr Kontrast, sonst verschwindet er.
+   Ueber ein Token statt doppelter Selektoren geloest. */
+button{border-color:var(--btn-border)}
+.role-switch .role,
+input, select, textarea{border-color:var(--border-strong)}
+
+/* =============================================================================
+   TABELLARISCHE ZIFFERN
+   Preise, Zeiten und Mengen aendern sich laufend. Mit proportionalen Ziffern
+   springt die Textbreite bei jedem Wechsel, was an der Theke unruhig wirkt.
+   Diese App zeigt fast ausschliesslich Messwerte, daher global.
+   ============================================================================= */
+body{
+  font-variant-numeric:tabular-nums;
+  font-feature-settings:"tnum" 1;
+}
+
+/* =============================================================================
+   MENGENWECHSEL: kurzer Puls auf der geaenderten Zahl
+   Gegenstueck zu syncProductTile()/syncPOSTile(), die nur noch das Badge
+   anfassen statt das ganze Grid neu zu bauen.
+   ============================================================================= */
+@keyframes badge-bump{
+  0%{transform:scale(1)}
+  40%{transform:scale(1.28)}
+  100%{transform:scale(1)}
+}
+.badge.badge-bump{animation:badge-bump .22s cubic-bezier(.3,1.4,.5,1)}
+
+/* Senden-Knopf traegt den Warenkorb-Zaehler */
+#btn-send-header .btn-badge{
+  background:#fff;
+  color:var(--blue);
+  box-shadow:0 1px 4px rgba(0,0,0,.25);
+}
+
+/* =============================================================================
+   BESTELLKARTEN: Ankunft, Abgang, Dringlichkeit
+   ============================================================================= */
+.order-card{position:relative}
+
+/* Neue Welle fliegt einmalig ein, damit an der Theke sofort sichtbar ist,
+   was dazugekommen ist. Siehe state.seenBatches in app.js. */
+@keyframes card-enter{
+  from{opacity:0;transform:translateY(-10px) scale(.97)}
+  to{opacity:1;transform:none}
+}
+.order-card.card-enter{animation:card-enter .36s var(--ease-ios) both}
+
+/* Abgeholt: Karte raeumt sich selbst ab, noch bevor der Server antwortet */
+.order-card.card-leave{
+  animation:card-leave .26s ease forwards;
+  pointer-events:none;
+}
+@keyframes card-leave{
+  to{opacity:0;transform:scale(.96);max-height:0;margin-bottom:-12px}
+}
+
+/* Dringlichkeit nach Wartezeit. Schwellen stehen in app.js (AGE_WARN_MIN,
+   AGE_LATE_MIN) und werden von refreshAges() alle 30 s nachgezogen.
+   Ein Streifen an der Kante statt Flaechenfarbe, damit die bestehende
+   Statusdarstellung und die Produktfarben unberuehrt bleiben. */
+.order-card::before{
+  content:'';
+  position:absolute;
+  left:0;top:10px;bottom:10px;
+  width:4px;
+  border-radius:0 3px 3px 0;
+  background:transparent;
+  transition:background-color .4s ease;
+}
+.order-card[data-age-level="warn"]::before{background:#f59e0b}
+.order-card[data-age-level="late"]::before{background:#ff3b30}
+.order-card[data-age-level="warn"] .time{color:#b45309;font-weight:700}
+.order-card[data-age-level="late"] .time{color:#ff3b30;font-weight:800}
+/* Im Dunkeln braucht die Warnfarbe mehr Helligkeit */
+:root[data-theme="dark"] .order-card[data-age-level="warn"] .time{color:#fbbf24}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .order-card[data-age-level="warn"] .time{color:#fbbf24}
+}
+/* Ueberfaellig: ruhiges Pulsieren, nur am Streifen, nicht an der ganzen Karte */
+.order-card[data-age-level="late"]::before{animation:age-pulse 2s ease-in-out infinite}
+@keyframes age-pulse{
+  0%,100%{opacity:1}
+  50%{opacity:.35}
+}
+
+/* Positionszeile reagiert sofort auf den Tipp, der Server antwortet spaeter */
+.order-card .item{transition:background-color .18s ease, color .18s ease, border-color .18s ease, transform .12s ease}
+
+/* =============================================================================
+   VERLAUFSLISTEN: Positionen mit Einzel- und Zeilenpreis
+   Vier Spalten, Zahlen rechtsbuendig, damit sich die Summe nachrechnen laesst.
+   Gebaut von buildHistoryItems() in app.js.
+   ============================================================================= */
+.history-item{
+  display:grid;
+  grid-template-columns:auto 1fr auto auto;
+  align-items:baseline;
+  gap:4px 10px;
+}
+.history-item .hi-qty{font-weight:700;min-width:2.2em}
+.history-item .hi-name{min-width:0;overflow-wrap:anywhere}
+.history-item .hi-unit{font-size:12px;white-space:nowrap}
+.history-item .hi-sum{font-weight:700;white-space:nowrap;text-align:right;min-width:5em}
+.history-item.is-cancelled .hi-name,
+.history-item.is-cancelled .hi-qty{text-decoration:line-through;opacity:.6}
+.history-item.is-cancelled .hi-sum{opacity:.6}
+/* Schmale Telefone: Einzelpreis unter den Namen statt daneben */
+@media (max-width:420px){
+  .history-item{grid-template-columns:auto 1fr auto}
+  .history-item .hi-unit{grid-column:2;grid-row:2;text-align:left}
+  .history-item .hi-sum{grid-row:1}
+}
+
+/* =============================================================================
+   ZAEHLER AM SENDEN-KNOPF
+   Unten rechts statt oben, in der Groesse der Mengen-Zahlen auf den
+   Produktkacheln und mit deckendem Grund.
+   ============================================================================= */
+#btn-send-header{position:relative;overflow:visible}
+#btn-send-header .btn-badge{
+  top:auto;
+  bottom:-8px;
+  right:-8px;
+  width:36px;
+  height:36px;
+  line-height:36px;
+  font-size:21px;
+  font-weight:800;
+  background:var(--surface);
+  color:var(--blue);
+  border:2px solid var(--blue);
+  box-shadow:0 2px 6px rgba(0,0,0,.3);
+}
+
+/* =============================================================================
+   SCHRIFTREGLER AN DER THEKE
+   Zwei Knoepfe als eine Einheit, wie ein iOS-Segmented-Control.
+   ============================================================================= */
+.font-stepper{
+  display:inline-flex;
+  align-items:stretch;
+  border:1px solid var(--btn-border);
+  border-radius:12px;
+  overflow:hidden;
+  background:linear-gradient(var(--btn-top),var(--btn-bottom));
+}
+.font-stepper button{
+  border:none;
+  border-radius:0;
+  background:transparent;
+  padding:10px 10px;
+  min-height:var(--tap);
+}
+.font-stepper button+button{border-left:1px solid var(--btn-border)}
+.font-stepper button:disabled{opacity:.35}
+.font-stepper .material-symbols-outlined{font-size:22px}
+
+/* =============================================================================
+   THEKE: verstellbare Schriftgroesse
+   --tf kommt aus applyThekeFontScale() in app.js (0.75 bis 1.6).
+   Nur innerhalb von #view-theke, damit Bediener- und Admin-Ansicht
+   unberuehrt bleiben.
+   ============================================================================= */
+:root{ --tf:1; }
+
+#view-theke .theke-col .col-title{font-size:calc(16px * var(--tf))}
+#view-theke .order-card .item{
+  font-size:calc(16px * var(--tf));
+  min-height:calc(82.5px * var(--tf));
+}
+#view-theke .order-card .time{font-size:calc(12px * var(--tf))}
+#view-theke .order-card .status{font-size:calc(12px * var(--tf))}
+#view-theke .order-card .row strong{font-size:calc(16px * var(--tf))}
+#view-theke .order-card .card-total{font-size:calc(15px * var(--tf))}
+#view-theke .order-card .card-total strong{font-size:calc(19px * var(--tf))}
+#view-theke .order-card .item-comment{font-size:calc(12px * var(--tf))}
+#view-theke .order-card .actions button{font-size:calc(14px * var(--tf))}
+/* POS-Spalte */
+#view-theke .pos-products-area .product-btn .name{font-size:calc(16px * var(--tf))}
+#view-theke .pos-checkout-area h3{font-size:calc(16px * var(--tf))}
+#view-theke .pos-checkout-area .pos-item{font-size:calc(14px * var(--tf))}
+#view-theke .pos-checkout-area .pos-total{font-size:calc(16px * var(--tf))}
+#view-theke .pos-checkout-area .pos-actions button{font-size:calc(15px * var(--tf))}
+/* Stationsansicht - die Media-Queries dort setzen !important, daher auch hier */
+#view-theke .station-product .name{font-size:calc(20px * var(--tf))!important}
+#view-theke .station-product .badge{font-size:calc(27px * var(--tf))!important}

@@ -2,7 +2,9 @@
 <html lang="de">
 <head>
   <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
+  <!-- viewport-fit=cover ist Voraussetzung dafuer, dass env(safe-area-inset-*)
+       im CSS echte Werte liefert. Ohne das bleibt die Statusleisten-Hoehe 0. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"/>
   <title>Thekenflow</title>
   <meta name="theme-color" content="#0a84ff">
   <link rel="manifest" href="/manifest.webmanifest">
@@ -32,6 +34,11 @@
     <button id="btn-orders-history" class="ghost hidden" title="Meine letzten Bestellungen"><span class="material-symbols-outlined">history</span></button>
     <button id="btn-waiter-overview" class="ghost hidden" title="Bediener Übersicht"><span class="material-symbols-outlined">group</span></button>
     <button id="btn-sound-toggle" class="ghost hidden" title="Ton an/aus"><span class="material-symbols-outlined">volume_up</span></button>
+    <button id="btn-theme-toggle" class="ghost hidden" title="Helles/dunkles Design"><span class="material-symbols-outlined">dark_mode</span></button>
+    <span id="theke-font-stepper" class="font-stepper hidden">
+      <button id="btn-font-dec" class="ghost" title="Schrift kleiner"><span class="material-symbols-outlined">text_decrease</span></button>
+      <button id="btn-font-inc" class="ghost" title="Schrift größer"><span class="material-symbols-outlined">text_increase</span></button>
+    </span>
     <button id="btn-station-select" class="ghost hidden" title="Station auswählen"><span class="material-symbols-outlined">assignment</span></button>
     <button id="btn-pos-history" class="ghost hidden" title="Letzte Bestellungen"><span class="material-symbols-outlined">history</span></button>
     <button id="btn-pos-toggle" class="ghost hidden">POS: AUS</button>

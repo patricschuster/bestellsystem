@@ -3,7 +3,7 @@ const $  = (s)=>document.querySelector(s);
 const $$ = (s)=>Array.from(document.querySelectorAll(s));
 const on = (sel,evt,fn)=>{ const el=(typeof sel==='string')?$(sel):sel; if(el) el.addEventListener(evt,fn); };
 
-const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:(window.__APP_VERSION__||'dev'), posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, selectedTheke:null, selectedCategory:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off' };
+const state={ role:'waiter', user:null, tables:[], products:[], orders:[], waiterHistory:[], posHistory:[], config:{}, version:(window.__APP_VERSION__||'dev'), posMode:false, posBasket:new Map(), sessions:[], heartbeatInterval:null, wakeLock:null, favorites:new Set(), favoritesFilterActive:false, selectedStation:null, selectedTheke:null, selectedCategory:null, ws:null, wsReconnectAttempts:0, connectionStatus:'offline', wsPingInterval:null, loginHealthCheckInterval:null, soundEnabled:localStorage.getItem('soundEnabled')!=='off', seenBatches:new Set(), thekeRendered:false };
 
 // iOS PWA: Pinch-Zoom (Multi-Touch) komplett blocken (Safari Gesture Events)
 document.addEventListener('gesturestart', (e) => e.preventDefault());
@@ -11,6 +11,241 @@ document.addEventListener('gesturechange', (e) => e.preventDefault());
 document.addEventListener('gestureend', (e) => e.preventDefault());
 
 async function api(path, opts={}){ const res=await fetch(path,{ headers:{'Content-Type':'application/json'}, ...opts }); if(!res.ok){ let t=await res.text(); try{ const j=JSON.parse(t); t=j.error||j.message||t; }catch{}; throw new Error(t); } return res.json(); }
+
+// =============================================================================
+// UI-DIALOGE (Ersatz fuer alert/confirm)
+// Native iOS-Apps zeigen keine Browser-Dialoge. Beide Funktionen rendern ein
+// Bottom-Sheet und geben ein Promise zurueck, damit der Aufrufcode gleich
+// bleibt: `await uiAlert(msg)` bzw. `if(!await uiConfirm(msg)) return;`
+// =============================================================================
+
+// Sheets stapeln sich nicht; ein offener Dialog wird vom naechsten ersetzt.
+let _openSheet=null;
+
+function closeSheet(result){
+  if(!_openSheet) return;
+  const {host, resolve}=_openSheet;
+  _openSheet=null;
+  host.classList.remove('sheet-open');
+  // Erst nach der Ausfahr-Animation aus dem DOM nehmen
+  setTimeout(()=>host.remove(), 260);
+  resolve(result);
+}
+
+/* Baut ein Bottom-Sheet. buttons: [{label, value, variant}] - der letzte Eintrag
+   ist die Primaeraktion (unten, hervorgehoben), wie in iOS-Action-Sheets. */
+function openSheet({title, message, buttons, destructive=false}){
+  if(_openSheet) closeSheet(null);
+
+  const host=document.createElement('div');
+  host.className='sheet-host';
+
+  const backdrop=document.createElement('div');
+  backdrop.className='sheet-backdrop';
+
+  const sheet=document.createElement('div');
+  sheet.className='sheet';
+  sheet.setAttribute('role','alertdialog');
+  sheet.setAttribute('aria-modal','true');
+
+  const grabber=document.createElement('div');
+  grabber.className='sheet-grabber';
+  sheet.appendChild(grabber);
+
+  const body=document.createElement('div');
+  body.className='sheet-body';
+  if(title){
+    const h=document.createElement('div');
+    h.className='sheet-title';
+    h.textContent=title;
+    body.appendChild(h);
+  }
+  if(message){
+    const p=document.createElement('div');
+    p.className='sheet-message';
+    p.textContent=message;
+    body.appendChild(p);
+  }
+  sheet.appendChild(body);
+
+  const actions=document.createElement('div');
+  actions.className='sheet-actions';
+  buttons.forEach((b,i)=>{
+    const btn=document.createElement('button');
+    const isPrimary=i===buttons.length-1;
+    btn.className='sheet-btn '+(b.variant || (isPrimary ? (destructive?'destructive':'primary') : 'cancel'));
+    btn.textContent=b.label;
+    btn.addEventListener('click',()=>closeSheet(b.value));
+    actions.appendChild(btn);
+  });
+  sheet.appendChild(actions);
+
+  host.append(backdrop,sheet);
+  document.body.appendChild(host);
+
+  // Tap auf den Hintergrund bricht ab, wie bei einem iOS-Sheet
+  const cancelValue=buttons.find(b=>b.variant==='cancel')?.value ?? buttons[0]?.value ?? null;
+  backdrop.addEventListener('click',()=>closeSheet(buttons.length>1?cancelValue:buttons[0]?.value));
+
+  // Doppeltes rAF: erst nach dem Einfuegen animiert die Transition
+  requestAnimationFrame(()=>requestAnimationFrame(()=>host.classList.add('sheet-open')));
+
+  return new Promise(resolve=>{ _openSheet={host, resolve}; });
+}
+
+/* Ersatz fuer alert(): eine Schaltflaeche, Promise loest beim Schliessen. */
+function uiAlert(message, {title=null}={}){
+  return openSheet({ title, message, buttons:[{label:'OK', value:true, variant:'primary'}] });
+}
+
+/* Ersatz fuer confirm(): Promise<boolean>. destructive faerbt die Primaeraktion
+   rot, wie iOS es bei Loeschen-Aktionen macht. */
+function uiConfirm(message, {title=null, confirmLabel='OK', cancelLabel='Abbrechen', destructive=false}={}){
+  return openSheet({
+    title, message, destructive,
+    buttons:[
+      {label:cancelLabel, value:false, variant:'cancel'},
+      {label:confirmLabel, value:true}
+    ]
+  });
+}
+
+// Escape schliesst das Sheet (Tastatur am iPad)
+document.addEventListener('keydown',(e)=>{
+  if(e.key==='Escape' && _openSheet) closeSheet(false);
+});
+
+// =============================================================================
+// FARBSCHEMA
+// Vorgabe ist die Systemeinstellung. Sobald der Nutzer den Schalter benutzt,
+// gilt seine Wahl fest - an der Theke steht das iPad oft hell eingestellt in
+// einem dunklen Raum, da hilft die Systemeinstellung allein nicht.
+// =============================================================================
+function storedTheme(){
+  try{ return localStorage.getItem('theme'); }catch{ return null; }
+}
+function systemPrefersDark(){
+  return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+}
+function effectiveTheme(){
+  return storedTheme() || (systemPrefersDark() ? 'dark' : 'light');
+}
+function applyTheme(){
+  const t=storedTheme();
+  // Ohne gespeicherte Wahl kein Attribut setzen, dann greift die Systemeinstellung
+  if(t) document.documentElement.setAttribute('data-theme', t);
+  else document.documentElement.removeAttribute('data-theme');
+  const icon=$('#btn-theme-toggle .material-symbols-outlined');
+  if(icon) icon.textContent = effectiveTheme()==='dark' ? 'light_mode' : 'dark_mode';
+  // Browser-Oberflaeche (Statusleiste der PWA) mitfaerben
+  const meta=document.querySelector('meta[name="theme-color"]');
+  if(meta) meta.setAttribute('content', effectiveTheme()==='dark' ? '#1c1c1e' : '#0a84ff');
+}
+// =============================================================================
+// SCHRIFTGROESSE AN DER THEKE
+// Wird als Faktor --tf gesetzt und von den Theken-Regeln in styles.css auf alle
+// Schriftgroessen und die Kachelhoehen angewandt. Pro Geraet gespeichert, denn
+// die 11- und die 12,9-Zoll-Theke brauchen unterschiedliche Stufen.
+// =============================================================================
+const TF_MIN=0.75, TF_MAX=1.6, TF_STEP=0.05;
+
+function thekeFontScale(){
+  const v=parseFloat(localStorage.getItem('thekeFontScale'));
+  return (Number.isFinite(v) && v>=TF_MIN && v<=TF_MAX) ? v : 1;
+}
+function applyThekeFontScale(){
+  const v=thekeFontScale();
+  document.documentElement.style.setProperty('--tf', String(v));
+  const dec=$('#btn-font-dec'), inc=$('#btn-font-inc');
+  // Auf Anschlag den Knopf sperren, damit sichtbar ist wo Schluss ist
+  if(dec) dec.disabled = v<=TF_MIN+0.001;
+  if(inc) inc.disabled = v>=TF_MAX-0.001;
+}
+function stepThekeFontScale(dir){
+  const next=Math.min(TF_MAX, Math.max(TF_MIN, Math.round((thekeFontScale()+dir*TF_STEP)*100)/100));
+  try{ localStorage.setItem('thekeFontScale', String(next)); }catch{}
+  applyThekeFontScale();
+  showNotification(`Schriftgröße ${Math.round(next*100)} %`,'info');
+  // Das POS-Gitter misst seine Kacheln selbst, nach der Aenderung neu rechnen
+  if(typeof layoutPOSGrid==='function'){
+    requestAnimationFrame(()=>{ layoutPOSGrid(); requestAnimationFrame(layoutPOSGrid); });
+  }
+}
+applyThekeFontScale();
+
+function toggleTheme(){
+  const next = effectiveTheme()==='dark' ? 'light' : 'dark';
+  try{ localStorage.setItem('theme', next); }catch{}
+  applyTheme();
+  showNotification(next==='dark'?'Dunkles Design':'Helles Design','info');
+}
+applyTheme();
+// Systemwechsel nur uebernehmen, solange der Nutzer nicht selbst gewaehlt hat
+if(window.matchMedia){
+  window.matchMedia('(prefers-color-scheme: dark)')
+    .addEventListener('change', ()=>{ if(!storedTheme()) applyTheme(); });
+}
+
+/* Tastatur-Hoehe als CSS-Variable bereitstellen.
+   Sheets sitzen am unteren Rand und wuerden sonst von der Bildschirmtastatur
+   verdeckt. Betrifft vor allem Rueckgeld-Rechner und Kommentar-Dialog. */
+(function trackKeyboardInset(){
+  const vv=window.visualViewport;
+  if(!vv) return;
+  const apply=()=>{
+    const inset=Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    document.documentElement.style.setProperty('--kb-inset', Math.round(inset)+'px');
+  };
+  vv.addEventListener('resize', apply);
+  vv.addEventListener('scroll', apply);
+  apply();
+})();
+
+// =============================================================================
+// LONG-PRESS (gemeinsamer Helper)
+// Bricht bei Fingerbewegung ab, damit Scrollen ueber einer Kachel nicht nach
+// 500ms den Long-Press ausloest. Setzt waehrend des Drucks eine Klasse fuer
+// visuelles Feedback.
+// =============================================================================
+function bindLongPress(el, onLongPress, {onTap=null, delay=500, moveTolerance=10}={}){
+  let timer=null, fired=false, startX=0, startY=0;
+
+  // Ein Bedienelement innerhalb der Kachel (z.B. der Minus-Button) hat seine
+  // eigene Aktion und darf den Long-Press nicht starten.
+  const fromChildControl=(e)=>{
+    const c=e.target.closest('button,a,input,select,textarea');
+    return c && c!==el;
+  };
+
+  const clear=()=>{ if(timer){ clearTimeout(timer); timer=null; } el.classList.remove('pressing'); };
+  const start=(x,y)=>{
+    fired=false; startX=x; startY=y;
+    clear();
+    el.classList.add('pressing');
+    timer=setTimeout(()=>{ fired=true; timer=null; el.classList.remove('pressing'); onLongPress(); }, delay);
+  };
+  const move=(x,y)=>{
+    if(!timer) return;
+    if(Math.abs(x-startX)>moveTolerance || Math.abs(y-startY)>moveTolerance) clear();
+  };
+
+  el.addEventListener('touchstart',(e)=>{ if(fromChildControl(e)) return; const t=e.touches[0]; start(t.clientX,t.clientY); },{passive:true});
+  el.addEventListener('touchmove',(e)=>{ const t=e.touches[0]; move(t.clientX,t.clientY); },{passive:true});
+  el.addEventListener('touchend',clear);
+  el.addEventListener('touchcancel',clear);
+  el.addEventListener('mousedown',(e)=>{ if(fromChildControl(e)) return; start(e.clientX,e.clientY); });
+  el.addEventListener('mousemove',(e)=>move(e.clientX,e.clientY));
+  el.addEventListener('mouseup',clear);
+  el.addEventListener('mouseleave',clear);
+
+  el.addEventListener('click',(e)=>{
+    clear();
+    // Klick kam vom Minus-Button: dessen Handler hat ihn schon behandelt
+    if(fromChildControl(e)) return;
+    if(fired){ fired=false; e.preventDefault(); e.stopPropagation(); return; }
+    if(onTap) onTap(e);
+  });
+}
 
 // =============================================================================
 // WEBSOCKET CLIENT (Hybrid Mode with Polling Fallback)
@@ -454,6 +689,13 @@ function refreshAges(){
   $$('[data-created-at]').forEach(el=>{
     const s=fmtAgeMinutes(el.dataset.createdAt);
     if(el.textContent!==s) el.textContent=s; // gleiche Minute -> kein Repaint
+    // Dringlichkeitsstufe der Karte mitziehen, damit eine wartende Bestellung
+    // sich von selbst meldet statt nur eine groessere Zahl zu zeigen.
+    const card=el.closest('.order-card');
+    if(card){
+      const lvl=ageLevel(el.dataset.createdAt);
+      if(card.dataset.ageLevel!==lvl) card.dataset.ageLevel=lvl;
+    }
   });
 }
 
@@ -500,15 +742,18 @@ function closeChangeModal(){
 }
 function saveComment(){
   if(!currentCommentProduct) return;
+  // ID sichern: closeCommentDialog() setzt currentCommentProduct auf null
+  const pid=currentCommentProduct.id;
   const comment=$('#comment-text').value.trim()||null;
-  const basketItem=basket.get(currentCommentProduct.id);
+  const basketItem=basket.get(pid);
   if(!basketItem){
-    basket.set(currentCommentProduct.id,{items:[{comment}]});
+    basket.set(pid,{items:[{comment}]});
   } else {
     basketItem.items.push({comment});
   }
   closeCommentDialog();
-  renderProducts();
+  if(!syncProductTile(pid)) renderProducts();
+  updateSendButton();
 }
 
 /* Station Selection */
@@ -594,14 +839,14 @@ async function renderWaiterOverview(){
     logoutBtn.className='outline';
     logoutBtn.innerHTML='<span class="material-symbols-outlined">logout</span> Abmelden';
     logoutBtn.addEventListener('click', async ()=>{
-      if(!confirm(`${w.waiter} wirklich abmelden?`)) return;
+      if(!await uiConfirm(`${w.waiter} wird abgemeldet und muss sich neu anmelden.`,{title:`${w.waiter} abmelden?`,confirmLabel:'Abmelden',destructive:true})) return;
       try{
         await api(`/api/sessions/${encodeURIComponent(w.waiter)}`, {method:'DELETE'});
         state.sessions=await api('/api/sessions');
         renderWaiterOverview();
         renderTheke();
       }catch(e){
-        alert('Fehler beim Abmelden: '+e.message);
+        uiAlert(e.message,{title:'Abmelden fehlgeschlagen'});
       }
     });
     const leftDiv=document.createElement('div');
@@ -611,7 +856,17 @@ async function renderWaiterOverview(){
   });
 }
 
+/* Welche View gerade sichtbar ist. Wird gebraucht, wenn updateHeader() ohne
+   Argument gerufen wird, etwa aus dem session:update-Ereignis. */
+function currentViewId(){
+  const v=$$('.view').find(x=>!x.classList.contains('hidden'));
+  return v ? '#'+v.id : '#view-login';
+}
+
 function updateHeader(viewId){
+  // Ohne Argument sonst: Titel faellt auf "Bestellsystem" zurueck und alle
+  // view-abhaengigen Knoepfe verschwinden, bis das naechste Rendern laeuft.
+  if(!viewId) viewId=currentViewId();
   const titles={'#view-login':'Login','#view-tables':'Tische','#view-products':'Produkte','#view-theke':'Theke','#view-cash':'Kassieren','#view-cash-detail':'Bestellung','#view-admin':'Admin','#view-pos-history':'Letzte Bestellungen','#view-orders-history':'Meine Bestellungen'};
   let title=titles[viewId]||'Bestellsystem';
   if(viewId==='#view-theke'){
@@ -636,6 +891,14 @@ function updateHeader(viewId){
   $('#btn-station-select').classList.toggle('hidden', !(state.role==='bar' && isThekeView && (hasStationProducts || hasMultiTheke)));
   $('#btn-station-select').classList.toggle('active', state.selectedStation!==null);
   $('#btn-sound-toggle').classList.toggle('hidden', !(state.role==='bar' && isThekeView));
+  // Schriftregler nur an der Theke, dort sitzt der Nutzer weit weg vom Display
+  $('#theke-font-stepper').classList.toggle('hidden', !(state.role==='bar' && isThekeView));
+  // Design-Schalter ueberall ausser auf der Anmeldung
+  // Design-Schalter nur dort, wo er nicht im Weg ist: beim Bediener auf der
+  // Tischuebersicht, nicht in der Produktauswahl. Theke und Admin behalten ihn,
+  // sonst gaebe es an der Theke keinen Zugang zum dunklen Schema.
+  const themeVisible = (state.role==='waiter') ? isTablesView : !onLogin;
+  $('#btn-theme-toggle').classList.toggle('hidden', !themeVisible);
   $('#btn-sound-toggle .material-symbols-outlined').textContent=state.soundEnabled?'volume_up':'volume_off';
   $('#hdr-right').classList.toggle('hidden', viewId!=='#view-cash-detail');
   $('#btn-fav-filter').classList.toggle('hidden', !(state.role==='waiter' && isTablesView));
@@ -692,12 +955,12 @@ on('#btn-login','click', async ()=>{
   try{
     if(state.role==='waiter'){
       const name=$('#inp-name').value.trim();
-      if(!name) return alert('Bitte Name eingeben');
+      if(!name) return uiAlert('Bitte gib deinen Namen ein.',{title:'Name fehlt'});
       // Namen beim Server belegen - er lehnt ab, wenn schon jemand so angemeldet ist
       try{
         await api('/api/sessions/login',{method:'POST', body:JSON.stringify({waiter:name})});
       }catch(e){
-        return alert(e.message);
+        return uiAlert(e.message,{title:'Anmeldung nicht möglich'});
       }
       state.user=name;
       try{
@@ -722,7 +985,7 @@ on('#btn-login','click', async ()=>{
     }
     else if(state.role==='bar'){
       const pin=$('#inp-pin').value.trim();
-      if(!pin||pin.length<4) return alert('Bitte gültige PIN eingeben');
+      if(!pin||pin.length<4) return uiAlert('Die PIN besteht aus mindestens vier Ziffern.',{title:'PIN unvollständig'});
 
       // Validate PIN against server
       const authResult = await api('/api/auth/login', {
@@ -730,7 +993,7 @@ on('#btn-login','click', async ()=>{
         body: JSON.stringify({ role: 'bar', pin })
       });
 
-      if(!authResult.success) return alert('Ungültige PIN');
+      if(!authResult.success) return uiAlert('Diese PIN ist nicht gültig. Bitte versuche es erneut.',{title:'Anmeldung fehlgeschlagen'});
 
       state.user='Theke';
       await loadInitial();
@@ -750,7 +1013,7 @@ on('#btn-login','click', async ()=>{
     }
     else {
       const pin=$('#inp-pin').value.trim();
-      if(!pin||pin.length<4) return alert('Bitte gültige PIN eingeben');
+      if(!pin||pin.length<4) return uiAlert('Die PIN besteht aus mindestens vier Ziffern.',{title:'PIN unvollständig'});
 
       // Validate PIN against server
       const authResult = await api('/api/auth/login', {
@@ -758,7 +1021,7 @@ on('#btn-login','click', async ()=>{
         body: JSON.stringify({ role: 'admin', pin })
       });
 
-      if(!authResult.success) return alert('Ungültige PIN');
+      if(!authResult.success) return uiAlert('Diese PIN ist nicht gültig. Bitte versuche es erneut.',{title:'Anmeldung fehlgeschlagen'});
 
       state.user='Admin';
       await loadInitial();
@@ -772,11 +1035,11 @@ on('#btn-login','click', async ()=>{
       pollOrders(); // Fallback polling (30s)
     }
   }catch(e){
-    alert('Fehler: '+e.message);
+    uiAlert(e.message,{title:'Fehler'});
   }
 });
 on('#btn-logout','click', async ()=>{
-  if(!confirm('Möchten Sie sich wirklich abmelden?')) return;
+  if(!await uiConfirm('Du wirst abgemeldet und landest wieder auf der Anmeldung.',{title:'Abmelden?',confirmLabel:'Abmelden',destructive:true})) return;
   releaseWakeLock();
   await stopHeartbeat();
 
@@ -798,40 +1061,28 @@ on('#btn-back-header','click', ()=>{
 });
 on('#btn-send-header','click', ()=>sendOrder());
 on('#btn-pos-toggle','click', ()=>{ state.posMode=!state.posMode; state.selectedCategory=null; $('#btn-pos-toggle').textContent=state.posMode?'POS: AN':'POS: AUS'; $('#btn-pos-toggle').classList.toggle('active', state.posMode); renderTheke(); updateHeader('#view-theke'); });
+on('#btn-theme-toggle','click', ()=>toggleTheme());
+on('#btn-font-dec','click', ()=>stepThekeFontScale(-1));
+on('#btn-font-inc','click', ()=>stepThekeFontScale(+1));
 on('#btn-sound-toggle','click', ()=>{ state.soundEnabled=!state.soundEnabled; localStorage.setItem('soundEnabled',state.soundEnabled?'on':'off'); updateHeader('#view-theke'); });
 on('#btn-pos-history','click', ()=>openPOSHistory());
 on('#btn-orders-history','click', ()=>openWaiterHistory());
 // Stern-Button: Tap = Filter toggle · Long-Press (500ms) = Verwalten-Modal
-let _favBtnLongPressTimer=null;
-let _favBtnLongPressFired=false;
 (function bindFavBtnLongPress(){
   const btn=$('#btn-fav-filter');
   if(!btn) return;
-  const start=()=>{
-    _favBtnLongPressFired=false;
-    if(_favBtnLongPressTimer) clearTimeout(_favBtnLongPressTimer);
-    _favBtnLongPressTimer=setTimeout(()=>{ _favBtnLongPressFired=true; openFavoritesSettings(); },500);
-  };
-  const cancel=()=>{ if(_favBtnLongPressTimer){ clearTimeout(_favBtnLongPressTimer); _favBtnLongPressTimer=null; } };
-  btn.addEventListener('touchstart',start,{passive:true});
-  btn.addEventListener('touchend',cancel);
-  btn.addEventListener('touchcancel',cancel);
-  btn.addEventListener('mousedown',start);
-  btn.addEventListener('mouseup',cancel);
-  btn.addEventListener('mouseleave',cancel);
+  bindLongPress(btn, ()=>openFavoritesSettings(), {onTap:()=>{
+    state.favoritesFilterActive=!state.favoritesFilterActive;
+    renderTables();
+    updateHeader('#view-tables');
+  }});
 })();
-on('#btn-fav-filter','click', ()=>{
-  if(_favBtnLongPressFired){ _favBtnLongPressFired=false; return; }
-  state.favoritesFilterActive=!state.favoritesFilterActive;
-  renderTables();
-  updateHeader('#view-tables');
-});
 on('#btn-close-fav-modal','click', ()=>closeFavoritesSettings());
 on('#btn-close-fav-modal-footer','click', ()=>closeFavoritesSettings());
 on('#btn-show-thresholds','click', ()=>$('#thresholds-modal').classList.remove('hidden'));
 on('#btn-close-thresholds','click', ()=>$('#thresholds-modal').classList.add('hidden'));
 on('#btn-close-thresholds-footer','click', ()=>$('#thresholds-modal').classList.add('hidden'));
-on('#btn-clear-all-fav','click', ()=>{ if(confirm('Wirklich alle Favoriten entfernen?')){ clearAllFavorites(); renderFavoritesSettings(); renderTables(); } });
+on('#btn-clear-all-fav','click', async ()=>{ if(await uiConfirm('Alle markierten Tische werden aus den Favoriten entfernt.',{title:'Favoriten leeren?',confirmLabel:'Entfernen',destructive:true})){ clearAllFavorites(); renderFavoritesSettings(); renderTables(); } });
 on('#btn-close-comment-modal','click', ()=>closeCommentDialog());
 on('#btn-cancel-comment','click', ()=>closeCommentDialog());
 on('#btn-save-comment','click', ()=>saveComment());
@@ -1040,24 +1291,7 @@ function renderTables(){
       b.appendChild(d);
     }
 
-    let pressTimer=null;
-    b.addEventListener('touchstart',(e)=>{
-      pressTimer=setTimeout(()=>showTableContextMenu(e,t.id),500);
-    });
-    b.addEventListener('touchend',()=>{
-      if(pressTimer){ clearTimeout(pressTimer); pressTimer=null; }
-    });
-    b.addEventListener('mousedown',(e)=>{
-      pressTimer=setTimeout(()=>showTableContextMenu(e,t.id),500);
-    });
-    b.addEventListener('mouseup',()=>{
-      if(pressTimer){ clearTimeout(pressTimer); pressTimer=null; }
-    });
-    b.addEventListener('mouseleave',()=>{
-      if(pressTimer){ clearTimeout(pressTimer); pressTimer=null; }
-    });
-    b.addEventListener('click',(e)=>{
-      if(pressTimer){ clearTimeout(pressTimer); pressTimer=null; }
+    bindLongPress(b, ()=>toggleFavoriteFromPress(t.id), {onTap:()=>{
       // Smart-Click: aktive Bestellung auf dem Tisch → Kassier-Detail; sonst Produkt-Grid.
       // Mehrere offene Bestellungen desselben Bedieners auf einem Tisch kann die
       // Oberfläche nicht erzeugen; träte es doch auf, wird die älteste geöffnet.
@@ -1074,16 +1308,18 @@ function renderTables(){
         }
       }
       openProducts(t.id);
-    });
+    }});
 
     grid.appendChild(b);
   });
 }
 
-function showTableContextMenu(e,tableId){
-  e.preventDefault();
-  e.stopPropagation();
+/* Long-Press auf einen Tisch schaltet den Favoriten um. Toast statt stiller
+   Aenderung, damit die Geste nachvollziehbar bleibt. */
+function toggleFavoriteFromPress(tableId){
   toggleFavorite(tableId);
+  const isFav=state.favorites.has(tableId);
+  showNotification(`Tisch ${tableDisplayNum(tableId)} ${isFav?'als Favorit gesetzt':'aus Favoriten entfernt'}`,'info');
   renderTables();
 }
 let currentTable=null; let basket=new Map();
@@ -1098,7 +1334,11 @@ function contrastColor(hex){ if(!hex) return '#0b0c0e'; const h=hex.replace('#',
 function applyProductColor(el, p, opts){
   if(!p || !p.color) return false;
   if(p.half){
-    el.style.background=`linear-gradient(to top, ${p.color} 50%, transparent 50%)`;
+    // Halbe Portion: die freie Haelfte bekommt eine feste helle Flaeche statt
+    // transparent. Durchsichtig wuerde im dunklen Schema den Untergrund
+    // durchscheinen lassen und die Haelfte des Produktnamens unlesbar machen.
+    el.style.background=`linear-gradient(to top, ${p.color} 50%, #ffffff 50%)`;
+    el.style.color='#0b0c0e';
   } else {
     el.style.background=p.color;
     el.style.color=contrastColor(p.color);
@@ -1174,6 +1414,7 @@ function renderProducts(){
   products.forEach(p=>{
     const card=document.createElement('div');
     card.className='product-btn product-v1';
+    card.dataset.productId=p.id;   // Anker fuer punktuelle Updates in syncProductTile()
     card.style.userSelect='none';
     card.style.webkitUserSelect='none';
     card.style.webkitTouchCallout='none';
@@ -1212,31 +1453,63 @@ function renderProducts(){
 
     card.append(top,name);
 
-    let pressTimer=null;
-    card.addEventListener('touchstart',(e)=>{
-      pressTimer=setTimeout(()=>openCommentDialog(p.id),500);
-    });
-    card.addEventListener('touchend',()=>{
-      if(pressTimer){ clearTimeout(pressTimer); pressTimer=null; }
-    });
-    card.addEventListener('mousedown',(e)=>{
-      pressTimer=setTimeout(()=>openCommentDialog(p.id),500);
-    });
-    card.addEventListener('mouseup',()=>{
-      if(pressTimer){ clearTimeout(pressTimer); pressTimer=null; }
-    });
-    card.addEventListener('mouseleave',()=>{
-      if(pressTimer){ clearTimeout(pressTimer); pressTimer=null; }
-    });
-    card.addEventListener('click',(e)=>{
-      if(pressTimer){ clearTimeout(pressTimer); pressTimer=null; }
-      addQty(p.id,+1);
-    });
+    bindLongPress(card, ()=>openCommentDialog(p.id), {onTap:()=>addQty(p.id,+1)});
 
     grid.appendChild(card);
   });
   updateHeader('#view-products');
+  updateSendButton();
 }
+/* Zaehler am Senden-Knopf. Ohne ihn muss der Bediener die Kacheln absuchen,
+   um zu sehen, was im Warenkorb liegt. */
+function updateSendButton(){
+  const btn=$('#btn-send-header');
+  if(!btn) return;
+  let n=0;
+  basket.forEach(bi=>{ n+=bi.items.length; });
+  let badge=btn.querySelector('.btn-badge');
+  if(!badge){
+    badge=document.createElement('span');
+    badge.className='btn-badge';
+    btn.appendChild(badge);
+  }
+  badge.textContent=n;
+  badge.style.display=n>0?'':'none';
+  btn.classList.toggle('has-items', n>0);
+}
+
+/* Aktualisiert genau eine Produktkachel statt das ganze Grid neu zu bauen.
+   Ein voller Rebuild ersetzt die Kachel im DOM, bricht damit jede Animation ab
+   und kostet bei vielen Produkten spuerbar Zeit. */
+function syncProductTile(pid){
+  const card=$(`#products-grid .product-btn[data-product-id="${pid}"]`);
+  if(!card) return false;
+  const basketItem=basket.get(pid);
+  const qty=basketItem?basketItem.items.length:0;
+
+  const badge=card.querySelector('.badge');
+  if(badge && badge.textContent!==String(qty)){
+    badge.textContent=qty;
+    // Kurzer Puls, damit die geaenderte Zahl auffaellt
+    badge.classList.remove('badge-bump');
+    void badge.offsetWidth;   // Reflow erzwingen, sonst startet die Animation nicht neu
+    badge.classList.add('badge-bump');
+  }
+
+  // Kommentar-Symbol nachziehen
+  const hasComment=!!(basketItem && basketItem.items.some(it=>it.comment));
+  const icon=card.querySelector('.comment-icon');
+  if(hasComment && !icon){
+    const el=document.createElement('span');
+    el.className='comment-icon material-symbols-outlined';
+    el.textContent='chat_bubble';
+    card.appendChild(el);
+  } else if(!hasComment && icon){
+    icon.remove();
+  }
+  return true;
+}
+
 function addQty(pid,delta){
   const basketItem=basket.get(pid);
   if(!basketItem){
@@ -1253,7 +1526,9 @@ function addQty(pid,delta){
       }
     }
   }
-  renderProducts();
+  // Nur die betroffene Kachel anfassen; voller Rebuild nur, wenn sie fehlt
+  if(!syncProductTile(pid)) renderProducts();
+  updateSendButton();
 }
 function orderItemsArray(){
   const items=[];
@@ -1269,18 +1544,20 @@ function orderItemsArray(){
   return items;
 }
 async function sendOrder(){
-  if(basket.size===0) return alert('Bitte Produkte auswählen');
+  if(basket.size===0) return uiAlert('Wähle mindestens ein Produkt aus, bevor du die Bestellung sendest.',{title:'Noch nichts ausgewählt'});
   const items=orderItemsArray();
   if(addToOrderId){
     await api(`/api/orders/${addToOrderId}/items`,{method:'POST',body:JSON.stringify({items})});
     const oid=addToOrderId;
     addToOrderId=null;
     basket.clear();
+    updateSendButton();   // Zaehler leeren, sonst bleibt die alte Zahl stehen
     state.orders=await api('/api/orders');
     openCashDetail(oid);
   } else {
     await api('/api/orders',{method:'POST',body:JSON.stringify({table_id:currentTable,waiter:state.user,items})});
     basket.clear();
+    updateSendButton();
     state.orders=await api('/api/orders');
     renderTables();
     show('#view-tables');
@@ -1504,6 +1781,9 @@ async function renderTheke(){
   } else {
     renderKitchenMode();
   }
+  // Ab jetzt duerfen neu auftauchende Wellen einfliegen. Beim allerersten
+  // Aufbau nicht, sonst animiert die komplette Ansicht auf einmal.
+  state.thekeRendered=true;
   updateHeader('#view-theke');
 
   // Stelle Scroll-Positionen wieder her (mit requestAnimationFrame für besseres Timing)
@@ -1712,11 +1992,73 @@ function getRenderableBatches(orders){
   return result;
 }
 
+/* Wie lange eine Bestellung warten darf, bevor die Karte sich meldet.
+   Flighty-Prinzip: die dringendste Information bekommt die staerkste
+   visuelle Behandlung, statt nur eine groessere Zahl anzuzeigen. */
+const AGE_WARN_MIN=5;
+const AGE_LATE_MIN=10;
+
+function ageMinutes(s){ return Math.max(0,Math.floor((Date.now()-toDate(s).getTime())/60000)); }
+function ageLevel(s){
+  const m=ageMinutes(s);
+  if(m>=AGE_LATE_MIN) return 'late';
+  if(m>=AGE_WARN_MIN) return 'warn';
+  return 'fresh';
+}
+
+/* Faerbt eine Positionszeile passend zu ihrem ready-Zustand.
+   Eine Funktion fuer Aufbau und Umschalten, damit beide nie auseinanderlaufen. */
+function paintItemLine(line, it){
+  line.classList.toggle('ready', !!it.ready);
+  line.classList.remove('has-product-color');
+  line.style.background='';
+  line.style.color='';
+  line.style.borderColor='';
+  line.style.boxShadow='';
+  // Produktfarbe nur im offenen Zustand; bei "bereit" gewinnt das gruene Styling
+  if(!it.ready){
+    const prod=state.products.find(p=>p.id===it.product_id);
+    if(applyProductColor(line, prod, {shadow:false})) line.classList.add('has-product-color');
+  }
+}
+
+/* Zieht Statusanzeige und Knopfbeschriftung einer Karte nach, ohne sie neu zu bauen. */
+function refreshBatchCardStatus(card, batchItems){
+  const allReady=batchItems.length>0 && batchItems.every(it=>it.ready);
+  const layout=(state.config.theke_layout||'badges');
+  const bd=card.querySelector('.status');
+  if(bd){
+    bd.className='status '+(allReady?'ready':'open');
+    bd.textContent=allReady?'bereit':'offen';
+  }
+  if(layout!=='badges'){
+    card.classList.toggle('bg-ready', allReady);
+    card.classList.toggle('bg-open', !allReady);
+  }
+  const btn=card.querySelector('.btn-all-ready');
+  if(btn){
+    btn.classList.toggle('btn-undo-ready', allReady);
+    btn.textContent=allReady?'Alle offen':'Alle bereit';
+  }
+}
+
 // Helper: baut eine Card für eine einzelne Batch
 function buildBatchCard(o, batch, batchItems){
   const card=document.createElement('div');
   card.className='order-card';
+  card.dataset.batchKey=`${o.id}:${batch}`;
+  card.dataset.ageLevel=ageLevel(o.created_at);
   if(o.waiter && o.waiter.startsWith('SIM_')) card.dataset.waiter = o.waiter;
+
+  // Neu eingetroffene Welle einmalig einfliegen lassen, damit an der Theke
+  // sofort klar ist, was dazugekommen ist. Beim ersten Aufbau nach dem
+  // Anmelden wird nichts animiert, sonst zappelt die ganze Ansicht.
+  const key=card.dataset.batchKey;
+  if(!state.seenBatches.has(key)){
+    state.seenBatches.add(key);
+    if(state.thekeRendered) card.classList.add('card-enter');
+  }
+
   const layout=(state.config.theke_layout||'badges');
   const row=document.createElement('div');
   row.className='row';
@@ -1746,13 +2088,9 @@ function buildBatchCard(o, batch, batchItems){
   itemsDiv.className='items';
   batchItems.forEach(it=>{
     const line=document.createElement('div');
-    line.className='item '+(it.ready?'ready':'');
+    line.className='item';
     setProductNameLines(line, productName(it.product_id));
-    // Produktfarbe uebernehmen; bei "bereit" gewinnt das gruene Ready-Styling
-    if(!it.ready){
-      const prod=state.products.find(p=>p.id===it.product_id);
-      if(applyProductColor(line, prod, {shadow:false})) line.classList.add('has-product-color');
-    }
+    paintItemLine(line, it);
     if(it.comment){
       const commentDiv=document.createElement('div');
       commentDiv.className='item-comment';
@@ -1763,10 +2101,25 @@ function buildBatchCard(o, batch, batchItems){
       commentDiv.appendChild(document.createTextNode(it.comment));
       line.appendChild(commentDiv);
     }
+    // Sofort umschalten, dann erst den Server fragen. Die Theke soll nicht auf
+    // zwei Netzwerkrunden warten, bevor sich sichtbar etwas tut.
     line.addEventListener('click', async ()=>{
-      await api(`/api/orders/${o.id}/items/${it.id}/toggle-ready`,{method:'PATCH'});
-      state.orders=await api('/api/orders');
-      renderTheke();
+      if(line.dataset.busy) return;
+      line.dataset.busy='1';
+      const prev=!!it.ready;
+      it.ready=!prev;
+      paintItemLine(line, it);
+      refreshBatchCardStatus(card, batchItems);
+      try{
+        await api(`/api/orders/${o.id}/items/${it.id}/toggle-ready`,{method:'PATCH'});
+      }catch(e){
+        it.ready=prev;                       // Server hat nicht angenommen
+        paintItemLine(line, it);
+        refreshBatchCardStatus(card, batchItems);
+        showNotification('Konnte nicht gespeichert werden','warning');
+      }finally{
+        delete line.dataset.busy;
+      }
     });
     itemsDiv.appendChild(line);
   });
@@ -1792,21 +2145,44 @@ function buildBatchCard(o, batch, batchItems){
   // Symmetrischer Toggle: quittiert die Welle, und nimmt bei erneutem Druck genau
   // das zurueck, was der vorige Klick gesetzt hat.
   const allReadyBtn=document.createElement('button');
-  allReadyBtn.className='outline order-action-btn'+(allReady?' btn-undo-ready':'');
+  allReadyBtn.className='outline order-action-btn btn-all-ready'+(allReady?' btn-undo-ready':'');
   allReadyBtn.textContent=allReady?'Alle offen':'Alle bereit';
   allReadyBtn.addEventListener('click', async ()=>{
-    await api(`/api/orders/${o.id}/batch/${batch}/ready`,{method:'POST', body:JSON.stringify({ready:!allReady})});
-    state.orders=await api('/api/orders');
-    renderTheke();
+    if(allReadyBtn.disabled) return;
+    const target=!batchItems.every(it=>it.ready);
+    const prev=batchItems.map(it=>!!it.ready);
+    batchItems.forEach(it=>{ it.ready=target; });
+    card.querySelectorAll('.items .item').forEach((line,i)=>paintItemLine(line, batchItems[i]));
+    refreshBatchCardStatus(card, batchItems);
+    allReadyBtn.disabled=true;
+    try{
+      await api(`/api/orders/${o.id}/batch/${batch}/ready`,{method:'POST', body:JSON.stringify({ready:target})});
+    }catch(e){
+      batchItems.forEach((it,i)=>{ it.ready=prev[i]; });
+      card.querySelectorAll('.items .item').forEach((line,i)=>paintItemLine(line, batchItems[i]));
+      refreshBatchCardStatus(card, batchItems);
+      showNotification('Konnte nicht gespeichert werden','warning');
+    }finally{
+      allReadyBtn.disabled=false;
+    }
   });
   leftA.appendChild(allReadyBtn);
   const pick=document.createElement('button');
   pick.className='outline order-action-btn';
   pick.textContent='Abgeholt';
   pick.addEventListener('click', async ()=>{
-    await api(`/api/orders/${o.id}/batch/${batch}/pickup`,{method:'POST'});
-    state.orders=await api('/api/orders');
-    renderTheke();
+    if(pick.disabled) return;
+    pick.disabled=true;
+    // Karte sofort ausblenden; sie verschwindet ohnehin beim naechsten Render
+    card.classList.add('card-leave');
+    try{
+      await api(`/api/orders/${o.id}/batch/${batch}/pickup`,{method:'POST'});
+      state.seenBatches.delete(key);
+    }catch(e){
+      card.classList.remove('card-leave');
+      pick.disabled=false;
+      showNotification('Konnte nicht gespeichert werden','warning');
+    }
   });
   rightA.appendChild(pick);
   actions.append(leftA,rightA);
@@ -1990,6 +2366,7 @@ function renderPOSColumn(container){
   posBase.forEach(p=>{
     const card=document.createElement('div');
     card.className='product-btn product-v1';
+    card.dataset.productId=p.id;   // Anker fuer syncPOSTile()
     applyProductColor(card, p);
     const minus=document.createElement('button');
     minus.className='minus';
@@ -2008,17 +2385,23 @@ function renderPOSColumn(container){
     top.className='topbar';
     top.append(minus,badge);
     card.append(top,name);
-    card.addEventListener('click',()=>{
-      addPOSQty(p.id,+1);
-      badge.textContent=state.posBasket.get(p.id)||0;
-    });
+    card.addEventListener('click',()=>addPOSQty(p.id,+1));
     prodGrid.appendChild(card);
   });
 
   productsArea.appendChild(prodGrid);
   container.appendChild(productsArea);
 
-  // Untere 50%: Checkout (wie POS-Only Modus)
+  container.appendChild(buildPOSCheckout());
+
+  // Nach Layout: Grid dynamisch vermessen (zweimal, damit Grid-Row-Sizing 1fr stabil ist)
+  requestAnimationFrame(()=>{ layoutPOSGrid(); requestAnimationFrame(layoutPOSGrid); });
+}
+
+/* Baut den Checkout-Bereich. Eigene Funktion, damit ein Mengenwechsel nur
+   diesen Block ersetzt statt das ganze Thekenlayout samt Grid-Vermessung
+   neu aufzubauen. */
+function buildPOSCheckout(){
   const checkoutArea=document.createElement('div');
   checkoutArea.className='pos-checkout-area';
 
@@ -2132,18 +2515,38 @@ function renderPOSColumn(container){
   }
 
   checkoutArea.appendChild(actions);
+  return checkoutArea;
+}
 
-  container.appendChild(checkoutArea);
-
-  // Nach Layout: Grid dynamisch vermessen (zweimal, damit Grid-Row-Sizing 1fr stabil ist)
-  requestAnimationFrame(()=>{ layoutPOSGrid(); requestAnimationFrame(layoutPOSGrid); });
+/* Mengenwechsel an der Theke: Kachel-Zahl und Checkout punktuell nachziehen.
+   Frueher lief hier renderTheke(), was das komplette Layout inklusive
+   Grid-Vermessung neu aufgebaut hat - bei jedem einzelnen Tipp. */
+function syncPOSTile(pid){
+  const card=$(`.pos-products-area .product-btn[data-product-id="${pid}"]`);
+  if(!card) return false;
+  const badge=card.querySelector('.badge');
+  const qty=state.posBasket.get(pid)||0;
+  if(badge && badge.textContent!==String(qty)){
+    badge.textContent=qty;
+    badge.classList.remove('badge-bump');
+    void badge.offsetWidth;
+    badge.classList.add('badge-bump');
+  }
+  return true;
 }
 
 function addPOSQty(pid,delta){
   const q=Math.max(0,(state.posBasket.get(pid)||0)+delta);
   if(q===0) state.posBasket.delete(pid);
   else state.posBasket.set(pid,q);
-  renderTheke();
+
+  const old=$('.pos-checkout-area');
+  if(syncPOSTile(pid) && old){
+    // Nur den Checkout tauschen, das Produktgrid bleibt unberuehrt stehen
+    old.replaceWith(buildPOSCheckout());
+  } else {
+    renderTheke();
+  }
 }
 
 /* Dynamisches POS-Produkt-Grid: Füllt verfügbare Fläche perfekt aus.
@@ -2262,21 +2665,7 @@ function renderPOSHistory(){
     row.append(left,middle,right);
     card.appendChild(row);
 
-    const items=document.createElement('div');
-    items.className='items';
-    items.style.marginTop='8px';
-    const grouped=new Map();
-    o.items.filter(it=>!it.cancelled).forEach(it=>{
-      const name=productName(it.product_id);
-      grouped.set(name,(grouped.get(name)||0)+1);
-    });
-    grouped.forEach((qty,name)=>{
-      const line=document.createElement('div');
-      line.className='item';
-      line.textContent=`${qty}x ${name}`;
-      items.appendChild(line);
-    });
-    card.appendChild(items);
+    card.appendChild(buildHistoryItems(o));
 
     wrap.appendChild(card);
   });
@@ -2297,6 +2686,69 @@ async function loadWaiterHistory(){
 async function openWaiterHistory(){
   await loadWaiterHistory();
   show('#view-orders-history');
+}
+
+/* Positionsliste einer Bestellung fuer die Verlaufsansichten.
+   Gruppiert nach Produkt UND Einzelpreis, damit nachtraegliche Preisaenderungen
+   nicht stillschweigend zusammengefasst werden. Vier Spalten: Menge, Name,
+   Einzelpreis, Zeilensumme. */
+function buildHistoryItems(order){
+  const items=document.createElement('div');
+  items.className='items history-items';
+  items.style.marginTop='8px';
+
+  const grouped=new Map();
+  (order.items||[]).filter(it=>!it.cancelled).forEach(it=>{
+    const name=productName(it.product_id);
+    const key=`${name}|${it.price}`;
+    if(!grouped.has(key)) grouped.set(key,{name, price:it.price, qty:0});
+    grouped.get(key).qty++;
+  });
+
+  grouped.forEach(g=>{
+    const line=document.createElement('div');
+    line.className='item history-item';
+
+    const qty=document.createElement('span');
+    qty.className='hi-qty';
+    qty.textContent=`${g.qty}x`;
+
+    const name=document.createElement('span');
+    name.className='hi-name';
+    name.textContent=g.name;
+
+    const unit=document.createElement('span');
+    unit.className='hi-unit muted';
+    unit.textContent=`à ${fmtEuro(g.price)}`;
+
+    const sum=document.createElement('span');
+    sum.className='hi-sum';
+    sum.textContent=fmtEuro(g.price*g.qty);
+
+    line.append(qty,name,unit,sum);
+    items.appendChild(line);
+  });
+
+  // Stornierte Positionen getrennt ausweisen, damit die Summe nachvollziehbar ist
+  const cancelled=(order.items||[]).filter(it=>it.cancelled);
+  if(cancelled.length){
+    const grp=new Map();
+    cancelled.forEach(it=>{
+      const n=productName(it.product_id);
+      grp.set(n,(grp.get(n)||0)+1);
+    });
+    grp.forEach((q,n)=>{
+      const line=document.createElement('div');
+      line.className='item history-item is-cancelled';
+      const qty=document.createElement('span'); qty.className='hi-qty'; qty.textContent=`${q}x`;
+      const name=document.createElement('span'); name.className='hi-name'; name.textContent=n;
+      const unit=document.createElement('span'); unit.className='hi-unit muted'; unit.textContent='storniert';
+      const sum=document.createElement('span'); sum.className='hi-sum'; sum.textContent='—';
+      line.append(qty,name,unit,sum);
+      items.appendChild(line);
+    });
+  }
+  return items;
 }
 
 function renderWaiterHistory(){
@@ -2340,21 +2792,7 @@ function renderWaiterHistory(){
     row.append(left,middle,right);
     card.appendChild(row);
 
-    const items=document.createElement('div');
-    items.className='items';
-    items.style.marginTop='8px';
-    const grouped=new Map();
-    o.items.filter(it=>!it.cancelled).forEach(it=>{
-      const name=productName(it.product_id);
-      grouped.set(name,(grouped.get(name)||0)+1);
-    });
-    grouped.forEach((qty,name)=>{
-      const line=document.createElement('div');
-      line.className='item';
-      line.textContent=`${qty}x ${name}`;
-      items.appendChild(line);
-    });
-    card.appendChild(items);
+    card.appendChild(buildHistoryItems(o));
 
     wrap.appendChild(card);
   });
@@ -2370,7 +2808,7 @@ async function adminApplyTables(){
   try{
     await api('/api/tables/count',{method:'PUT', body:JSON.stringify({count:target})});
   }catch(e){
-    return alert('Fehler beim Anpassen der Tische: '+e.message);
+    return uiAlert(e.message,{title:'Tische anpassen fehlgeschlagen'});
   }
   await adminTablesLoad();
 }
@@ -2400,7 +2838,7 @@ async function adminProductsLoad(){
     const tr=document.createElement('tr'); tr.dataset.id=p.id;
     const color=p.color||'#ffffff';
     const stationOptions=`<option value="">Keine</option>${stations.map(s=>`<option value="${s}" ${p.station===s?'selected':''}>${s}</option>`).join('')}`;
-    const colorCell=`<select class="color-select" data-id="${p.id}" data-k="color" style="background-color:${color}">${FAV_COLORS.some(f=>f.c.toLowerCase()===color.toLowerCase())?'':`<option value="${color}" selected>Aktuell</option>`}${FAV_COLORS.map(f=>`<option value="${f.c}" ${color.toLowerCase()===f.c.toLowerCase()?'selected':''}>${f.n}</option>`).join('')}</select>`;
+    const colorCell=`<select class="color-select" data-id="${p.id}" data-k="color" style="background-color:${color};color:${contrastColor(color)}">${FAV_COLORS.some(f=>f.c.toLowerCase()===color.toLowerCase())?'':`<option value="${color}" selected>Aktuell</option>`}${FAV_COLORS.map(f=>`<option value="${f.c}" ${color.toLowerCase()===f.c.toLowerCase()?'selected':''}>${f.n}</option>`).join('')}</select>`;
 
     // Theke-Mehrfachauswahl (leer = alle Theken)
     const sel=Array.isArray(p.theken)?p.theken:[];
@@ -2414,10 +2852,15 @@ async function adminProductsLoad(){
   });
   tbl.appendChild(tb);
 
-  tb.addEventListener('click', async (e)=>{ const del=e.target.closest('.btn-del'); if(del){ const id=+del.dataset.id; if(!confirm(`Produkt #${id} wirklich löschen?`)) return; await api(`/api/products/${id}`,{method:'DELETE'}); await adminProductsLoad(); return; } const up=e.target.closest('.btn-up'); const down=e.target.closest('.btn-down'); if(!up&&!down) return; const id=+(up?up.dataset.id:down.dataset.id); const row=tb.querySelector(`tr[data-id="${id}"]`); if(up){ const prev=row.previousElementSibling; if(prev) tb.insertBefore(row,prev); } else { const next=row.nextElementSibling; if(next) tb.insertBefore(next,row); } $$('#prod-table tbody tr .btn-up').forEach((b,i)=> b.disabled=(i===0)); const rows=$$('#prod-table tbody tr'); rows.forEach((r,i)=>{ const dn=r.querySelector('.btn-down'); if(dn) dn.disabled=(i===rows.length-1); }); const ids=$$('#prod-table tbody tr').map(tr=>+tr.dataset.id); await api('/api/products/order',{method:'PUT', body:JSON.stringify({order:ids})}); state.products=await api('/api/products'); });
+  tb.addEventListener('click', async (e)=>{ const del=e.target.closest('.btn-del'); if(del){ const id=+del.dataset.id; const pname=(state.products.find(p=>p.id===id)||{}).name||('#'+id); if(!await uiConfirm(`"${pname}" wird dauerhaft gelöscht.`,{title:'Produkt löschen?',confirmLabel:'Löschen',destructive:true})) return; await api(`/api/products/${id}`,{method:'DELETE'}); await adminProductsLoad(); return; } const up=e.target.closest('.btn-up'); const down=e.target.closest('.btn-down'); if(!up&&!down) return; const id=+(up?up.dataset.id:down.dataset.id); const row=tb.querySelector(`tr[data-id="${id}"]`); if(up){ const prev=row.previousElementSibling; if(prev) tb.insertBefore(row,prev); } else { const next=row.nextElementSibling; if(next) tb.insertBefore(next,row); } $$('#prod-table tbody tr .btn-up').forEach((b,i)=> b.disabled=(i===0)); const rows=$$('#prod-table tbody tr'); rows.forEach((r,i)=>{ const dn=r.querySelector('.btn-down'); if(dn) dn.disabled=(i===rows.length-1); }); const ids=$$('#prod-table tbody tr').map(tr=>+tr.dataset.id); await api('/api/products/order',{method:'PUT', body:JSON.stringify({order:ids})}); state.products=await api('/api/products'); });
   // Farb-Dropdown: Hintergrund des Selects spiegelt die gewaehlte Farbe
   tb.querySelectorAll('select[data-k="color"]').forEach(sel=>{
-    sel.addEventListener('change', ()=>{ sel.style.backgroundColor = sel.value; });
+    sel.addEventListener('change', ()=>{
+      sel.style.backgroundColor = sel.value;
+      // Schriftfarbe mitziehen, sonst steht im dunklen Schema heller Text
+      // auf einer hellen Produktfarbe
+      sel.style.color = contrastColor(sel.value);
+    });
   });
   // Theke-Mehrfachauswahl: Summary aktualisieren + speichern
   tb.querySelectorAll('.theke-multi').forEach(det=>{
@@ -2489,7 +2932,7 @@ async function adminStationsLoad(){
     deleteBtn.className='outline';
     deleteBtn.textContent='Löschen';
     deleteBtn.addEventListener('click',async ()=>{
-      if(!confirm(`Station "${station}" wirklich löschen?`)) return;
+      if(!await uiConfirm(`Die Station "${station}" wird entfernt. Zugeordnete Produkte bleiben erhalten.`,{title:'Station löschen?',confirmLabel:'Löschen',destructive:true})) return;
       const newStations=stations.filter(s=>s!==station);
       await api('/api/config',{method:'PUT', body:JSON.stringify({stations:newStations})});
       await adminStationsLoad();
@@ -2502,13 +2945,13 @@ async function adminStationsLoad(){
 
 async function adminAddStation(){
   const name=$('#station-new-name').value.trim();
-  if(!name) return alert('Bitte Stationsname eingeben');
+  if(!name) return uiAlert('Bitte gib einen Namen für die Station ein.',{title:'Name fehlt'});
 
   state.config=await api('/api/config');
   const stations=state.config.stations||[];
 
   if(stations.includes(name)){
-    return alert('Diese Station existiert bereits');
+    return uiAlert('Eine Station mit diesem Namen gibt es schon.',{title:'Name schon vergeben'});
   }
 
   stations.push(name);
@@ -2531,7 +2974,7 @@ async function adminConfigListLoad(configKey, listSel, labelSing){
     const nameDiv=document.createElement('div'); nameDiv.innerHTML=`<strong>${name}</strong>`;
     const del=document.createElement('button'); del.className='outline'; del.textContent='Löschen';
     del.addEventListener('click', async ()=>{
-      if(!confirm(`"${name}" wirklich löschen?`)) return;
+      if(!await uiConfirm(`"${name}" wird entfernt.`,{title:`${labelSing} löschen?`,confirmLabel:'Löschen',destructive:true})) return;
       const next=items.filter(s=>s!==name);
       await api('/api/config',{method:'PUT', body:JSON.stringify({[configKey]:next})});
       await adminConfigListLoad(configKey, listSel, labelSing);
@@ -2542,10 +2985,10 @@ async function adminConfigListLoad(configKey, listSel, labelSing){
 }
 async function adminConfigListAdd(configKey, inputSel, listSel, labelSing){
   const name=$(inputSel).value.trim();
-  if(!name) return alert(`Bitte ${labelSing}-Name eingeben`);
+  if(!name) return uiAlert(`Bitte gib einen Namen für die ${labelSing} ein.`,{title:'Name fehlt'});
   state.config=await api('/api/config');
   const items=state.config[configKey]||[];
-  if(items.includes(name)) return alert(`"${name}" existiert bereits`);
+  if(items.includes(name)) return uiAlert(`"${name}" gibt es schon.`,{title:'Name schon vergeben'});
   items.push(name);
   await api('/api/config',{method:'PUT', body:JSON.stringify({[configKey]:items})});
   $(inputSel).value='';
@@ -2556,49 +2999,49 @@ async function adminAddTheke(){ return adminConfigListAdd('theken','#theke-new-n
 async function adminKategorienLoad(){ return adminConfigListLoad('kategorien','#kategorien-list','Kategorie'); }
 async function adminAddKategorie(){ return adminConfigListAdd('kategorien','#kategorie-new-name','#kategorien-list','Kategorie'); }
 
-async function adminAddProduct(){ const name=$('#p-new-name').value.trim(); const price=priceToNumber($('#p-new-price').value); const color=$('#p-new-color').value||null; if(!name || !Number.isFinite(price) || price===0) return alert('Name & Preis erforderlich (Preis ≠ 0, negativ erlaubt)'); await api('/api/products',{method:'POST', body:JSON.stringify({name,price,color})}); $('#p-new-name').value=''; $('#p-new-price').value=''; $('#p-new-color').value='#ffffff'; await adminProductsLoad(); }
+async function adminAddProduct(){ const name=$('#p-new-name').value.trim(); const price=priceToNumber($('#p-new-price').value); const color=$('#p-new-color').value||null; if(!name || !Number.isFinite(price) || price===0) return uiAlert('Name und Preis sind erforderlich. Der Preis darf nicht null sein, negative Werte sind erlaubt.',{title:'Angaben unvollständig'}); await api('/api/products',{method:'POST', body:JSON.stringify({name,price,color})}); $('#p-new-name').value=''; $('#p-new-price').value=''; $('#p-new-color').value='#ffffff'; await adminProductsLoad(); }
 async function adminReportLoad(){ const rep=await api('/api/report/summary'); $('#rep-total').textContent=fmtEuro(rep.total); const tbl=$('#rep-table'); tbl.innerHTML=''; const thead=document.createElement('thead'); thead.innerHTML='<tr><th>Produkt</th><th>Anzahl</th></tr>'; tbl.appendChild(thead); const tb=document.createElement('tbody'); (rep.products||[]).forEach(r=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${r.name}</td><td>${r.qty}</td>`; tb.appendChild(tr); }); tbl.appendChild(tb); }
-async function adminResetReport(){ if(!confirm('Wirklich alle Bestellungen & Positionen dauerhaft löschen?')) return; await api('/api/report/reset',{method:'POST'}); await adminReportLoad(); }
+async function adminResetReport(){ if(!await uiConfirm('Alle Bestellungen und Positionen werden dauerhaft gelöscht. Das lässt sich nicht rückgängig machen.',{title:'Auswertung zurücksetzen?',confirmLabel:'Alles löschen',destructive:true})) return; await api('/api/report/reset',{method:'POST'}); await adminReportLoad(); }
 
 async function adminSavePinBar() {
   const newPin = $('#pin-bar-input').value.trim();
   if (!newPin) {
-    return alert('Bitte neue PIN eingeben');
+    return uiAlert('Bitte gib die neue PIN ein.',{title:'PIN fehlt'});
   }
   if (!/^\d{4,8}$/.test(newPin)) {
-    return alert('PIN muss 4-8 Ziffern enthalten');
+    return uiAlert('Die PIN muss aus vier bis acht Ziffern bestehen.',{title:'PIN ungültig'});
   }
   try {
     await api('/api/settings/pins', {
       method: 'PUT',
       body: JSON.stringify({ pin_bar: newPin })
     });
-    alert('Theke-PIN erfolgreich geändert');
+    showNotification('Theke-PIN geändert','success');
     $('#pin-bar-input').value = '';
     await adminSystemLoad();
   } catch (e) {
-    alert('Fehler beim Ändern der PIN: ' + e.message);
+    uiAlert(e.message,{title:'PIN ändern fehlgeschlagen'});
   }
 }
 
 async function adminSavePinAdmin() {
   const newPin = $('#pin-admin-input').value.trim();
   if (!newPin) {
-    return alert('Bitte neue PIN eingeben');
+    return uiAlert('Bitte gib die neue PIN ein.',{title:'PIN fehlt'});
   }
   if (!/^\d{4,8}$/.test(newPin)) {
-    return alert('PIN muss 4-8 Ziffern enthalten');
+    return uiAlert('Die PIN muss aus vier bis acht Ziffern bestehen.',{title:'PIN ungültig'});
   }
   try {
     await api('/api/settings/pins', {
       method: 'PUT',
       body: JSON.stringify({ pin_admin: newPin })
     });
-    alert('Admin-PIN erfolgreich geändert');
+    showNotification('Admin-PIN geändert','success');
     $('#pin-admin-input').value = '';
     await adminSystemLoad();
   } catch (e) {
-    alert('Fehler beim Ändern der PIN: ' + e.message);
+    uiAlert(e.message,{title:'PIN ändern fehlgeschlagen'});
   }
 }
 
@@ -2627,9 +3070,9 @@ function simReadConfig(){
 
 async function simStart(){
   const cfg = simReadConfig();
-  if(cfg.orderIntervalMin >= cfg.orderIntervalMax) return alert('Order-Intervall: min muss < max sein');
-  if(cfg.itemsMin > cfg.itemsMax) return alert('Items pro Order: min > max');
-  if(cfg.payFull + cfg.payPartial > 100) return alert('Zahl-Mix: voll + teil > 100%');
+  if(cfg.orderIntervalMin >= cfg.orderIntervalMax) return uiAlert('Beim Order-Intervall muss der Minimalwert kleiner als der Maximalwert sein.',{title:'Konfiguration prüfen'});
+  if(cfg.itemsMin > cfg.itemsMax) return uiAlert('Bei den Items pro Order ist der Minimalwert größer als der Maximalwert.',{title:'Konfiguration prüfen'});
+  if(cfg.payFull + cfg.payPartial > 100) return uiAlert('Voll- und Teilzahlung ergeben zusammen mehr als hundert Prozent.',{title:'Konfiguration prüfen'});
   try {
     await api('/api/simulator/start', { method:'POST', body: JSON.stringify(cfg) });
     if($('#sim-browser-mode').checked) simBrowserStart(cfg, +$('#sim-browser-count').value||3);
@@ -2637,7 +3080,7 @@ async function simStart(){
     $('#btn-sim-stop').disabled  = false;
     $('#sim-running-badge').classList.remove('hidden');
     simStartPolling();
-  } catch(e){ alert('Start fehlgeschlagen: ' + e.message); }
+  } catch(e){ uiAlert(e.message,{title:'Simulator-Start fehlgeschlagen'}); }
 }
 
 async function simStop(){
@@ -2650,12 +3093,12 @@ async function simStop(){
 }
 
 async function simCleanup(){
-  if(!confirm('Alle Simulator-Orders (Prefix SIM_) wirklich loeschen?')) return;
+  if(!await uiConfirm('Alle Einträge mit dem Präfix SIM_ werden entfernt.',{title:'Simulator-Daten löschen?',confirmLabel:'Löschen',destructive:true})) return;
   try {
     const r = await api('/api/simulator/cleanup', { method:'POST' });
-    alert(`Cleanup abgeschlossen: ${r.ordersRemoved} Orders entfernt`);
+    showNotification(`Cleanup fertig: ${r.ordersRemoved} Orders entfernt`,'success');
     await simPollOnce();
-  } catch(e){ alert('Cleanup fehlgeschlagen: ' + e.message); }
+  } catch(e){ uiAlert(e.message,{title:'Cleanup fehlgeschlagen'}); }
 }
 
 function adminSimulatorOpen(){ simPollOnce(); simStartPolling(); }
@@ -3019,7 +3462,7 @@ async function pollOrders(){
           if(state.role==='waiter' && state.user){
             const mySession=state.sessions.find(s=>s.waiter===state.user);
             if(!mySession){
-              alert('Du wurdest von der Theke abgemeldet.');
+              showNotification('Du wurdest von der Theke abgemeldet','warning');
               releaseWakeLock();
               await stopHeartbeat();
               disconnectWebSocket();
