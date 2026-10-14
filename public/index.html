@@ -20,7 +20,7 @@
 <body>
 <header id="app-header" class="hidden">
   <div class="left">
-    <button id="btn-logout" class="ghost"><span class="material-symbols-outlined">logout</span></button>
+    <button id="btn-logout" class="ghost"><span class="material-symbols-outlined">logout</span><span class="lbl">Abmelden</span></button>
     <button id="btn-back-header" class="ghost outline hidden"><span class="material-symbols-outlined">arrow_back</span></button>
     <span id="hdr-left"></span>
     <span id="connection-status" class="connection-status offline" title="Offline"></span>
@@ -33,16 +33,24 @@
     <button id="btn-fav-filter" class="ghost hidden" title="Tap: Filter · Long-Press: Favoriten verwalten"><span class="material-symbols-outlined">star_outline</span></button>
     <button id="btn-orders-history" class="ghost hidden" title="Meine letzten Bestellungen"><span class="material-symbols-outlined">history</span></button>
     <button id="btn-waiter-overview" class="ghost hidden" title="Bediener Übersicht"><span class="material-symbols-outlined">group</span></button>
-    <button id="btn-sound-toggle" class="ghost hidden" title="Ton an/aus"><span class="material-symbols-outlined">volume_up</span></button>
-    <button id="btn-theme-toggle" class="ghost hidden" title="Helles/dunkles Design"><span class="material-symbols-outlined">dark_mode</span></button>
-    <span id="theke-font-stepper" class="font-stepper hidden">
-      <button id="btn-font-dec" class="ghost" title="Schrift kleiner"><span class="material-symbols-outlined">text_decrease</span></button>
-      <button id="btn-font-inc" class="ghost" title="Schrift größer"><span class="material-symbols-outlined">text_increase</span></button>
+    <!-- .lbl-Texte sind nur im Stations-Menue sichtbar (siehe syncHeaderMenu) -->
+    <button id="btn-sound-toggle" class="ghost hidden" title="Ton an/aus"><span class="material-symbols-outlined">volume_up</span><span class="lbl">Ton</span></button>
+    <button id="btn-theme-toggle" class="ghost hidden" title="Helles/dunkles Design"><span class="material-symbols-outlined">dark_mode</span><span class="lbl">Design</span></button>
+    <span id="theke-font-stepper" class="hdr-font-row hidden">
+      <span class="material-symbols-outlined row-icon">format_size</span><span class="lbl">Schrift</span>
+      <span class="font-stepper">
+        <button id="btn-font-dec" class="ghost" title="Schrift kleiner"><span class="material-symbols-outlined">text_decrease</span></button>
+        <button id="btn-font-inc" class="ghost" title="Schrift größer"><span class="material-symbols-outlined">text_increase</span></button>
+      </span>
     </span>
-    <button id="btn-station-select" class="ghost hidden" title="Station auswählen"><span class="material-symbols-outlined">assignment</span></button>
+    <button id="btn-station-select" class="ghost hidden" title="Station auswählen"><span class="material-symbols-outlined">assignment</span><span class="lbl">Station wählen</span></button>
     <button id="btn-pos-history" class="ghost hidden" title="Letzte Bestellungen"><span class="material-symbols-outlined">history</span></button>
     <button id="btn-pos-toggle" class="ghost hidden">POS: AUS</button>
     <button id="btn-send-header" class="primary hidden"><span class="material-symbols-outlined">send</span></button>
+    <!-- Hamburger-Menue nur in der Stationsansicht der Theke. syncHeaderMenu
+         haengt die dort sichtbaren Knoepfe hierher um und wieder zurueck. -->
+    <button id="btn-menu" class="ghost hidden" title="Menü" aria-haspopup="true" aria-expanded="false"><span class="material-symbols-outlined">menu</span></button>
+    <div id="hdr-menu" class="hdr-menu hidden" role="menu"></div>
   </div>
 </header>
 

@@ -130,16 +130,24 @@ function systemPrefersDark(){
 function effectiveTheme(){
   return storedTheme() || (systemPrefersDark() ? 'dark' : 'light');
 }
-function applyTheme(){
-  const t=storedTheme();
+// Die Anmeldung ist immer hell, unabhaengig von gespeicherter Wahl und System.
+// Das gewaehlte Schema greift erst nach dem Login; updateHeader ruft applyTheme
+// erneut, sobald die Anmeldung betreten oder verlassen wird.
+let _themeLoginLock=null;
+function applyTheme(onLogin=currentViewId()==='#view-login'){
+  _themeLoginLock=onLogin;
+  const t=onLogin ? 'light' : storedTheme();
   // Ohne gespeicherte Wahl kein Attribut setzen, dann greift die Systemeinstellung
   if(t) document.documentElement.setAttribute('data-theme', t);
   else document.documentElement.removeAttribute('data-theme');
+  const eff=onLogin ? 'light' : effectiveTheme();
   const icon=$('#btn-theme-toggle .material-symbols-outlined');
-  if(icon) icon.textContent = effectiveTheme()==='dark' ? 'light_mode' : 'dark_mode';
+  if(icon) icon.textContent = eff==='dark' ? 'light_mode' : 'dark_mode';
+  const lbl=$('#btn-theme-toggle .lbl');
+  if(lbl) lbl.textContent = eff==='dark' ? 'Helles Design' : 'Dunkles Design';
   // Browser-Oberflaeche (Statusleiste der PWA) mitfaerben
   const meta=document.querySelector('meta[name="theme-color"]');
-  if(meta) meta.setAttribute('content', effectiveTheme()==='dark' ? '#1c1c1e' : '#0a84ff');
+  if(meta) meta.setAttribute('content', eff==='dark' ? '#1c1c1e' : '#0a84ff');
 }
 // =============================================================================
 // SCHRIFTGROESSE AN DER THEKE
@@ -147,11 +155,15 @@ function applyTheme(){
 // Schriftgroessen und die Kachelhoehen angewandt. Pro Geraet gespeichert, denn
 // die 11- und die 12,9-Zoll-Theke brauchen unterschiedliche Stufen.
 // =============================================================================
-const TF_MIN=0.75, TF_MAX=1.6, TF_STEP=0.05;
+// Die Stationsansicht hat einen eigenen Wert mit 130 % als Vorgabe: dort steht
+// man noch weiter weg, und die Kacheln sind gross genug fuer grosse Schrift.
+const TF_MIN=0.75, TF_MAX=1.6, TF_STEP=0.05, TF_STATION_DEFAULT=1.3;
 
+function inStationMode(){ return state.role==='bar' && state.selectedStation!==null; }
+function fontScaleKey(){ return inStationMode() ? 'stationFontScale' : 'thekeFontScale'; }
 function thekeFontScale(){
-  const v=parseFloat(localStorage.getItem('thekeFontScale'));
-  return (Number.isFinite(v) && v>=TF_MIN && v<=TF_MAX) ? v : 1;
+  const v=parseFloat(localStorage.getItem(fontScaleKey()));
+  return (Number.isFinite(v) && v>=TF_MIN && v<=TF_MAX) ? v : (inStationMode() ? TF_STATION_DEFAULT : 1);
 }
 function applyThekeFontScale(){
   const v=thekeFontScale();
@@ -163,7 +175,7 @@ function applyThekeFontScale(){
 }
 function stepThekeFontScale(dir){
   const next=Math.min(TF_MAX, Math.max(TF_MIN, Math.round((thekeFontScale()+dir*TF_STEP)*100)/100));
-  try{ localStorage.setItem('thekeFontScale', String(next)); }catch{}
+  try{ localStorage.setItem(fontScaleKey(), String(next)); }catch{}
   applyThekeFontScale();
   showNotification(`Schriftgröße ${Math.round(next*100)} %`,'info');
   // Das POS-Gitter misst seine Kacheln selbst, nach der Aenderung neu rechnen
@@ -876,6 +888,7 @@ function updateHeader(viewId){
   }
   $('#hdr-title').textContent=title;
   const onLogin=viewId==='#view-login';
+  if(onLogin!==_themeLoginLock) applyTheme(onLogin);
   const isTablesView=viewId==='#view-tables';
   const isThekeView=viewId==='#view-theke';
 
@@ -926,8 +939,54 @@ function updateHeader(viewId){
   else if(state.role==='admin') $('#hdr-left').textContent='v'+state.version;
   else $('#hdr-left').textContent='';
 
+  $('#btn-sound-toggle .lbl').textContent=state.soundEnabled?'Ton ausschalten':'Ton einschalten';
+
+  syncHeaderMenu(state.role==='bar' && isThekeView && state.selectedStation!==null);
+  // Station und normale Theke haben getrennte Schriftgroessen
+  applyThekeFontScale();
+
   // Update connection status indicator
   updateConnectionStatus();
+}
+
+// =============================================================================
+// HEADER-MENUE (Hamburger), nur in der Stationsansicht der Theke
+// Die Knoepfe werden umgehaengt statt dupliziert, behalten also IDs, Handler
+// und die Sichtbarkeitsregeln aus updateHeader. Ausserhalb der Station stehen
+// sie wieder an ihrem alten Platz. Antippen eines Eintrags schliesst das Menue,
+// der Schriftregler nicht, damit man mehrere Stufen hintereinander tippen kann.
+// =============================================================================
+// Reihenfolge im Menue; Abmelden zuletzt
+const HDR_MENU_IDS=['#btn-station-select','#btn-sound-toggle','#btn-theme-toggle','#theke-font-stepper','#btn-logout'];
+// Urspruengliche Reihenfolge rechts im Header (alle direkt vor dem Senden-Knopf)
+const HDR_RIGHT_IDS=['#btn-sound-toggle','#btn-theme-toggle','#theke-font-stepper','#btn-station-select'];
+function syncHeaderMenu(menuMode){
+  const header=$('#app-header');
+  if(header.classList.contains('menu-mode')!==menuMode){
+    header.classList.toggle('menu-mode', menuMode);
+    if(menuMode){
+      const menu=$('#hdr-menu');
+      HDR_MENU_IDS.forEach(id=>menu.appendChild($(id)));
+    } else {
+      closeHeaderMenu();
+      const send=$('#btn-send-header');
+      HDR_RIGHT_IDS.forEach(id=>send.before($(id)));
+      $('#app-header .left').prepend($('#btn-logout'));
+    }
+  }
+  const hasItems=menuMode && $$('#hdr-menu > *').some(el=>!el.classList.contains('hidden'));
+  $('#btn-menu').classList.toggle('hidden', !hasItems);
+  if(!hasItems) closeHeaderMenu();
+}
+function openHeaderMenu(){
+  $('#hdr-menu').classList.remove('hidden');
+  $('#btn-menu').classList.add('active');
+  $('#btn-menu').setAttribute('aria-expanded','true');
+}
+function closeHeaderMenu(){
+  $('#hdr-menu').classList.add('hidden');
+  $('#btn-menu').classList.remove('active');
+  $('#btn-menu').setAttribute('aria-expanded','false');
 }
 function show(viewId){
   $$('.view').forEach(v=>v.classList.add('hidden'));
@@ -1062,6 +1121,20 @@ on('#btn-back-header','click', ()=>{
 on('#btn-send-header','click', ()=>sendOrder());
 on('#btn-pos-toggle','click', ()=>{ state.posMode=!state.posMode; state.selectedCategory=null; $('#btn-pos-toggle').textContent=state.posMode?'POS: AN':'POS: AUS'; $('#btn-pos-toggle').classList.toggle('active', state.posMode); renderTheke(); updateHeader('#view-theke'); });
 on('#btn-theme-toggle','click', ()=>toggleTheme());
+on('#btn-menu','click', (e)=>{
+  e.stopPropagation();
+  if($('#hdr-menu').classList.contains('hidden')) openHeaderMenu(); else closeHeaderMenu();
+});
+// In der Capture-Phase, weil der Long-Press des Favoriten-Knopfs den Klick
+// stoppt; der eigentliche Handler des Eintrags laeuft danach trotzdem.
+$('#hdr-menu').addEventListener('click', (e)=>{
+  const btn=e.target.closest('button');
+  if(btn && !btn.closest('.font-stepper')) closeHeaderMenu();
+}, true);
+// Tipp ausserhalb schliesst das Menue
+document.addEventListener('click', (e)=>{
+  if(!e.target.closest('#hdr-menu') && !e.target.closest('#btn-menu')) closeHeaderMenu();
+});
 on('#btn-font-dec','click', ()=>stepThekeFontScale(-1));
 on('#btn-font-inc','click', ()=>stepThekeFontScale(+1));
 on('#btn-sound-toggle','click', ()=>{ state.soundEnabled=!state.soundEnabled; localStorage.setItem('soundEnabled',state.soundEnabled?'on':'off'); updateHeader('#view-theke'); });
@@ -1826,63 +1899,35 @@ function renderStationMode(){
     const empty=document.createElement('div');
     empty.className='muted text-center';
     empty.style.padding='32px';
-    empty.innerHTML='<h3>Keine offenen Bestellungen</h3><p>Alle Produkte für diese Station sind bereit.</p>';
+    empty.innerHTML='<h3>Keine Bestellungen</h3>';
     cols.appendChild(empty);
     return;
   }
 
-  // Gruppiere nach Produkt-ID UND Kommentar (damit Produkte mit/ohne Kommentar separate Kacheln bekommen)
-  const grouped=new Map();
-  stationItems.forEach(item=>{
-    const key=`${item.product_id}_${item.comment||''}`;
-    if(!grouped.has(key)){
-      grouped.set(key,{
-        product_id:item.product_id,
-        name:productName(item.product_id),
-        comment:item.comment||null,
-        items:[],
-        oldest_created_at:null
-      });
-    }
-    const group=grouped.get(key);
-    group.items.push(item);
-    // Speichere das älteste created_at für diese Gruppe
-    if(!group.oldest_created_at || item.created_at<group.oldest_created_at){
-      group.oldest_created_at=item.created_at;
-    }
-  });
-
-  // Sortiere Gruppen nach ältestem Bestellzeitpunkt (älteste zuerst)
-  const sortedGroups=Array.from(grouped.values()).sort((a,b)=>{
-    return new Date(a.oldest_created_at) - new Date(b.oldest_created_at);
-  });
+  // Jede Einheit bekommt ihre eigene Kachel (jede order_items-Zeile ist genau
+  // ein Stueck). Zwei offene Radler = zwei Kacheln, kein Zaehler. Aelteste zuerst,
+  // innerhalb einer Bestellung in Eingabereihenfolge.
+  stationItems.sort((a,b)=>(new Date(a.created_at)-new Date(b.created_at)) || (a.id-b.id));
 
   // Erstelle Produkt-Kacheln (wie in Bedienungs-Ansicht)
   const grid=document.createElement('div');
   grid.className='grid products';
 
-  sortedGroups.forEach(group=>{
-    const product=state.products.find(p=>p.id===group.product_id);
+  stationItems.forEach(item=>{
+    const product=state.products.find(p=>p.id===item.product_id);
+    const itemName=productName(item.product_id);
     const card=document.createElement('div');
     card.className='product-btn product-v1 station-product';
     card.style.position='relative';
 
     applyProductColor(card, product);
 
-    const badge=document.createElement('div');
-    badge.className='badge';
-    badge.style.position='absolute';
-    badge.style.top='8px';
-    badge.style.right='8px';
-    badge.style.fontSize='27px';
-    badge.style.fontWeight='bold';
-    badge.textContent=group.items.length;
-
-    const tableNums=[...new Set(group.items.map(it=>it.waiter==='POS'?'POS':`T${tableDisplayNum(it.table_id)}`))].join(', ');
+    // Statt der Tischnummer steht auf der Kachel, wer bestellt hat
+    const waiterLabel=item.waiter==='POS'?'POS':(item.waiter||'');
 
     // Kommentar anzeigen (falls vorhanden)
     let commentDiv=null;
-    if(group.comment){
+    if(item.comment){
       // Name-Container mit Tischnummer oben und Produktname darunter
       const name=document.createElement('div');
       name.className='name';
@@ -1896,20 +1941,22 @@ function renderStationMode(){
       name.style.gap='4px';
 
       const tableNumsInName=document.createElement('div');
-      tableNumsInName.textContent=tableNums;
+      tableNumsInName.className='station-table';
+      tableNumsInName.textContent=waiterLabel;
       tableNumsInName.style.fontSize='14px';
       tableNumsInName.style.fontWeight='700';
       tableNumsInName.style.opacity='0.75';
 
       const productNameText=document.createElement('div');
-      productNameText.textContent=group.name;
+      productNameText.className='station-name-text';
+      productNameText.textContent=itemName;
       productNameText.style.fontSize='1.5em';
       productNameText.style.fontWeight='800';
 
       name.append(tableNumsInName,productNameText);
 
       commentDiv=document.createElement('div');
-      commentDiv.className='item-comment';
+      commentDiv.className='item-comment station-comment';
       commentDiv.style.display='flex';
       commentDiv.style.alignItems='center';
       commentDiv.style.gap='4px';
@@ -1928,14 +1975,14 @@ function renderStationMode(){
       icon.style.fontSize='16px';
       icon.textContent='chat_bubble';
       commentDiv.appendChild(icon);
-      commentDiv.appendChild(document.createTextNode(group.comment));
+      commentDiv.appendChild(document.createTextNode(item.comment));
 
-      card.append(badge,name,commentDiv);
+      card.append(name,commentDiv);
     } else {
       // Standard: Name zentral, Tischnummer unten
       const name=document.createElement('div');
       name.className='name';
-      name.textContent=group.name;
+      name.textContent=itemName;
       name.style.fontSize='1.5em';
       name.style.fontWeight='800';
       name.style.flex='1';
@@ -1946,20 +1993,20 @@ function renderStationMode(){
       name.style.zIndex='1';
 
       const tables=document.createElement('div');
-      tables.textContent=tableNums;
+      tables.className='station-table';
+      tables.textContent=waiterLabel;
       tables.style.fontSize='16px';
       tables.style.opacity='0.75';
       tables.style.textAlign='center';
       tables.style.fontWeight='700';
       tables.style.width='100%';
 
-      card.append(badge,name,tables);
+      card.append(name,tables);
     }
 
     card.addEventListener('click',async ()=>{
-      // Markiere nur das erste Item als bereit (Anzahl reduziert sich um 1)
-      const firstItem = group.items[0];
-      await api(`/api/orders/${firstItem.order_id}/items/${firstItem.id}/ready`,{method:'POST'});
+      // Genau diese Einheit als bereit markieren, ihre Kachel verschwindet
+      await api(`/api/orders/${item.order_id}/items/${item.id}/ready`,{method:'POST'});
       state.orders=await api('/api/orders');
       renderTheke();
     });
@@ -2814,7 +2861,14 @@ async function adminApplyTables(){
 }
 function priceToNumber(s){ if(typeof s==='number') return s; s=(s||'').toString().trim().replace('.','').replace(',','.'); return parseFloat(s)||0; }
 // Favoritenfarben fuer Produktkacheln (einzige waehlbare Farben, kein freier Color-Picker)
-const FAV_COLORS=[{c:'#FCEFB4',n:'Gelb'},{c:'#C7C7C7',n:'Grau'},{c:'#F6B2B5',n:'Rosa'},{c:'#A7C7E7',n:'Blau'},{c:'#C1E1C1',n:'Hellgrün'},{c:'#A8D5BA',n:'Mintgrün'},{c:'#D4C5E8',n:'Lila'},{c:'#FFD8B1',n:'Pfirsich'},{c:'#ffffff',n:'Weiß'}];
+// Pastellpalette fuer Produktkacheln, nach Farbton sortiert. Gespeichert wird der Hexwert,
+// die Reihenfolge darf sich also aendern, ohne dass bestehende Produkte umfaerben.
+const FAV_COLORS=[
+  {c:'#FCEFB4',n:'Gelb'},{c:'#EBCB8B',n:'Ocker'},{c:'#FFD8B1',n:'Pfirsich'},{c:'#F4A79D',n:'Koralle'},
+  {c:'#F6B2B5',n:'Rosa'},{c:'#E5C3E0',n:'Flieder'},{c:'#D4C5E8',n:'Lila'},{c:'#A7C7E7',n:'Blau'},
+  {c:'#A8DCD9',n:'Türkis'},{c:'#A8D5BA',n:'Mintgrün'},{c:'#C1E1C1',n:'Hellgrün'},{c:'#DCEBA8',n:'Limette'},
+  {c:'#E6DAC3',n:'Sand'},{c:'#C7C7C7',n:'Grau'},{c:'#ffffff',n:'Weiß'}
+];
 async function adminProductsLoad(){
   state.config=await api('/api/config'); // frisch, damit neue Theken/Kategorien erscheinen
   const list=await api('/api/products');
@@ -3543,7 +3597,7 @@ document.addEventListener('touchmove', (e) => {
   if (!document.body.classList.contains('lock-scroll')) return;
 
   // Scroll erlauben nur innerhalb der Spalten
-  const scroller = e.target.closest('.theke-col, .bediener-column, .pos-column, .pos-products-area');
+  const scroller = e.target.closest('.theke-col, .bediener-column, .pos-column, .pos-products-area, .station-mode-grid .grid.products');
   if (scroller) return;
 
   e.preventDefault();

@@ -449,6 +449,16 @@ textarea{resize:vertical;min-height:80px}
 .btn-cancel-item{background:none;border:1px solid var(--border-strong);color:#dc2626;font-size:18px;font-weight:700;width:32px;height:32px;min-height:32px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;line-height:1}
 .btn-cancel-item:hover{background:#fee2e2;border-color:#dc2626}
 .order-action-btn::before{content:'';position:absolute;top:-8.8px;bottom:-8.8px;left:-8.8px;right:-8.8px}
+/* Die vergroesserten Trefferflaechen duerfen sich nicht ueberlappen, sonst
+   gewinnt der spaetere Button: ein Tipp auf die Kante von "Alle bereit" loeste
+   "Abgeholt" aus. Nach aussen wachsen, zur Mitte hin nur bis zur halben Luecke. */
+/* Nebeneinander (Luecke 8px): links nur bis zur Mitte nach rechts, rechts nur nach links */
+.order-card .actions .left .order-action-btn::before{right:-4px}
+.order-card .actions .right .order-action-btn::before{left:-4px}
+/* Untereinander (Luecke 4px): oben wachsen nach oben, unten nach unten */
+.bediener-column.vertical-layout .order-card .actions .order-action-btn::before{left:-8.8px;right:-8.8px}
+.bediener-column.vertical-layout .order-card .actions .left .order-action-btn::before{top:-14px;bottom:-2px}
+.bediener-column.vertical-layout .order-card .actions .right .order-action-btn::before{top:-2px;bottom:-14px}
 .admin-tabs{display:flex;gap:8px;margin-bottom:12px}
 .admin-tabs .tab{flex:1}
 .admin-section .admin-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 6px 16px rgba(0,0,0,.06);padding:12px;margin-bottom:12px}
@@ -976,7 +986,7 @@ textarea{resize:vertical;min-height:80px}
     padding:5px;
     height:100%;
     grid-auto-rows:calc((100% - 10px - 5px) / 2);
-    overflow:hidden;
+    overflow-y:auto; /* Einzelkacheln: ab der 9. scrollen statt abschneiden */
   }
   .station-product{
     min-height:auto!important;
@@ -1023,7 +1033,7 @@ textarea{resize:vertical;min-height:80px}
     padding:6px;
     height:100%;
     grid-auto-rows:calc((100% - 12px - 6px) / 2);
-    overflow:hidden;
+    overflow-y:auto; /* Einzelkacheln: ab der 9. scrollen statt abschneiden */
   }
   .station-product{
     min-height:auto!important;
@@ -1505,3 +1515,121 @@ body{
 /* Stationsansicht - die Media-Queries dort setzen !important, daher auch hier */
 #view-theke .station-product .name{font-size:calc(20px * var(--tf))!important}
 #view-theke .station-product .badge{font-size:calc(27px * var(--tf))!important}
+
+/* =============================================================================
+   HEADER-MENUE (Hamburger), nur in der Stationsansicht der Theke
+   syncHeaderMenu haengt die Knoepfe in #hdr-menu um. Ausserhalb davon sehen
+   sie aus wie immer: Texte (.lbl) und Zeilen-Icon des Schriftreglers bleiben
+   verborgen. Selektoren mit header#app-header, damit die kompakten Header-Regeln
+   der Querformat-Breakpoints die Menuezeilen nicht verkleinern.
+   ============================================================================= */
+header#app-header .lbl,
+header#app-header .hdr-font-row .row-icon{display:none}
+.hdr-font-row{display:inline-flex}
+header#app-header .right{position:relative}
+header#app-header #btn-menu.active{background:var(--accent-soft)}
+header#app-header .hdr-menu{
+  position:absolute;top:calc(100% + 10px);right:0;z-index:60;
+  min-width:260px;max-width:calc(100vw - 24px);
+  max-height:calc(100vh - var(--safe-top) - 90px);overflow-y:auto;
+  display:flex;flex-direction:column;
+  padding:6px;
+  background:var(--surface);
+  border:.5px solid var(--hairline);
+  border-radius:14px;
+  box-shadow:0 12px 32px rgba(0,0,0,.18);
+  animation:hdrMenuIn .18s var(--ease-ios);
+  transform-origin:top right;
+}
+@keyframes hdrMenuIn{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:none}}
+header#app-header .hdr-menu .lbl,
+header#app-header .hdr-menu .hdr-font-row .row-icon{display:inline}
+header#app-header .hdr-menu > button,
+header#app-header .hdr-menu > .hdr-font-row{
+  display:flex;align-items:center;gap:12px;
+  width:100%;min-height:var(--tap);
+  padding:10px 12px;
+  border:none;border-radius:10px;
+  background:transparent;color:var(--fg);
+  font-size:16px;font-weight:500;text-align:left;
+  box-shadow:none;transform:none;
+}
+header#app-header .hdr-menu > .hidden{display:none!important}
+header#app-header .hdr-menu > button:active{background:var(--surface-2)}
+header#app-header .hdr-menu > * > .material-symbols-outlined{font-size:22px;width:24px;flex:0 0 24px;text-align:center}
+header#app-header .hdr-menu .lbl{flex:1}
+header#app-header .hdr-menu > button.active{background:var(--accent-soft);color:var(--blue)}
+/* Schriftregler als eigene Zeile, die Knoepfe rechts */
+header#app-header .hdr-menu .font-stepper{margin-left:auto}
+header#app-header .hdr-menu .font-stepper button{min-height:36px;padding:6px 12px}
+header#app-header .hdr-menu .font-stepper .material-symbols-outlined{font-size:20px}
+/* Abmelden abgesetzt am Ende, in Rot */
+header#app-header .hdr-menu > #btn-logout{color:var(--red);margin-top:4px;border-top:.5px solid var(--hairline);border-radius:0 0 10px 10px}
+
+/* =============================================================================
+   STATIONSANSICHT: GROSSE EINZELKACHELN
+   Querformat: drei Kacheln nebeneinander in voller Hoehe, weitere schliessen
+   rechts an (waagerecht wischen). Hochformat: eine Kachel in der Breite, drei
+   uebereinander, weitere darunter (senkrecht scrollen). Ueberschreibt die
+   aelteren Breakpoint-Regeln fuer .station-mode-grid weiter oben.
+   ============================================================================= */
+#view-theke .station-mode-grid .grid.products{
+  gap:12px;
+  padding:12px;
+  height:100%;
+  align-content:stretch;
+  scroll-padding:12px;
+  -webkit-overflow-scrolling:touch;
+}
+@media (orientation:landscape){
+  #view-theke .station-mode-grid .grid.products{
+    grid-template-columns:none;
+    grid-template-rows:1fr;
+    grid-auto-flow:column;
+    grid-auto-columns:calc((100% - 24px) / 3);
+    grid-auto-rows:auto;
+    overflow-x:auto;
+    overflow-y:hidden;
+    scroll-snap-type:x proximity;
+  }
+}
+@media (orientation:portrait){
+  #view-theke .station-mode-grid .grid.products{
+    grid-template-columns:1fr;
+    grid-auto-flow:row;
+    grid-auto-rows:calc((100% - 24px) / 3);
+    overflow-x:hidden;
+    overflow-y:auto;
+    scroll-snap-type:y proximity;
+  }
+}
+#view-theke .station-mode-grid .station-product{
+  min-height:0!important;
+  height:auto;
+  padding:16px!important;
+  gap:8px;
+  scroll-snap-align:start;
+  overflow:hidden;
+}
+/* Schrift an die Kachelgroesse gekoppelt, der Regler an der Theke (--tf) wirkt weiter */
+#view-theke .station-mode-grid .station-product .name{
+  font-size:calc(clamp(28px, 3.4vw, 52px) * var(--tf))!important;
+  font-weight:800!important;
+  line-height:1.1;
+  text-align:center;
+  overflow-wrap:anywhere;
+  hyphens:auto;
+}
+#view-theke .station-mode-grid .station-product .station-name-text{font-size:1em!important}
+#view-theke .station-mode-grid .station-product .station-table{
+  font-size:calc(clamp(18px, 1.9vw, 28px) * var(--tf))!important;
+}
+#view-theke .station-mode-grid .station-product .station-comment{
+  font-size:calc(clamp(16px, 1.6vw, 24px) * var(--tf))!important;
+}
+#view-theke .station-mode-grid .station-product .station-comment .material-symbols-outlined{font-size:1.2em!important}
+@media (orientation:portrait){
+  #view-theke .station-mode-grid .station-product .name{font-size:calc(clamp(32px, 5.5vw, 60px) * var(--tf))!important}
+  #view-theke .station-mode-grid .station-product .station-table{font-size:calc(clamp(20px, 3vw, 32px) * var(--tf))!important}
+  #view-theke .station-mode-grid .station-product .station-comment{font-size:calc(clamp(18px, 2.6vw, 28px) * var(--tf))!important}
+}
