@@ -147,8 +147,8 @@ header .right button{position:relative}
   height:calc(100vh - var(--hdr-h));   /* iOS 14- */
   height:calc(100dvh - var(--hdr-h));  /* iOS 15+ dynamic */
   height:calc(100svh - var(--hdr-h));  /* iOS 15+ stable (preferred) */
-  /* Safe-Area für Home Indicator */
-  padding-bottom:env(safe-area-inset-bottom);
+  /* Kein Abstand fuer den Home-Indikator: Die Theke laeuft als PWA im
+     gefuehrten Zugriff, Wischgesten sind dort ohnehin gesperrt. */
 }
 button{min-height:var(--tap);padding:10px 14px;border-radius:12px;cursor:pointer;border:1px solid rgba(0,0,0,.08);background:linear-gradient(var(--btn-top),var(--btn-bottom));font-weight:700}
 button.primary{color:#fff;background:linear-gradient(#1990ff,#0a84ff);border-color:#0a84ff}
@@ -226,7 +226,9 @@ textarea{resize:vertical;min-height:80px}
 .qty-display{min-width:40px;text-align:center;font-weight:700;font-size:14px}
 
 /* Hybrid Layout für POS-Modus mit Bedienern */
-.hybrid-layout{display:grid;height:calc(100vh - 60px);gap:10px;padding:5px 10px 10px 10px;overflow:hidden;box-sizing:border-box}
+/* Hoehe kommt von #view-theke (zieht Header, Statusleiste und Home-Indikator ab).
+   Frueher 100vh-60px: in der iPad-PWA ragten die Kassier-Buttons unten heraus. */
+.hybrid-layout{display:grid;height:100%;gap:10px;padding:5px 10px 5px 10px;overflow:hidden;box-sizing:border-box}
 .hybrid-layout.split-30-70{grid-template-columns:30% 70%}
 .hybrid-layout.split-50-50{grid-template-columns:50% 50%}
 .bediener-column{overflow-y:auto;border-right:2px solid var(--border);padding-right:8px;padding-top:0;display:flex;flex-direction:column;gap:12px}
@@ -276,6 +278,7 @@ textarea{resize:vertical;min-height:80px}
   display: grid;
   gap: 8px;
   width: 100%;
+  margin-top: 0; /* .grid.products setzt 10px, die layoutPOSGrid() nicht kennt -> 10px Scrollen */
   align-content: start;
   grid-template-columns: repeat(4, 1fr); /* Fallback */
 }
@@ -330,7 +333,7 @@ textarea{resize:vertical;min-height:80px}
   background:var(--surface);
   border:1px solid var(--border);
   border-radius:12px;
-  padding:10px 12px 12px 12px;
+  padding:10px 12px;
   min-height:130px;
   max-height:40vh;
 }
@@ -373,7 +376,7 @@ textarea{resize:vertical;min-height:80px}
   gap:8px;
   margin-top:12px;
   flex-shrink:0;
-  padding-bottom:8px;
+  padding-bottom:0;
 }
 .pos-checkout-area .pos-actions button{
   flex:1;
@@ -691,6 +694,9 @@ textarea{resize:vertical;min-height:80px}
   left:0;
   right:0;
 }
+/* Unter den Kassier-Buttons liegen nur noch 10px Kartenpolster: Trefferflaeche
+   dort enden lassen, sonst ragt sie aus der Karte (scrollHeight +4px). */
+.pos-checkout-area .pos-actions button::before{bottom:-10px}
 .pos-actions button.outline{
   flex:0.33;
 }
@@ -941,7 +947,7 @@ textarea{resize:vertical;min-height:80px}
   padding:0;
   display:flex;
   flex-direction:column;
-  height:calc(100vh - 80px);
+  height:100%;
   overflow:hidden;
 }
 .station-mode-grid .grid.products{
@@ -977,7 +983,7 @@ textarea{resize:vertical;min-height:80px}
     padding-top:10px;
   }
   .station-mode-grid{
-    height:calc(100vh - 44px - 5px - 10px - 5px);
+    height:calc(100% - 5px);
     margin-bottom:5px;
   }
   .station-mode-grid .grid.products{
@@ -1024,7 +1030,7 @@ textarea{resize:vertical;min-height:80px}
     padding-top:10px;
   }
   .station-mode-grid{
-    height:calc(100vh - 48px - 5px - 10px - 5px);
+    height:calc(100% - 5px);
     margin-bottom:5px;
   }
   .station-mode-grid .grid.products{

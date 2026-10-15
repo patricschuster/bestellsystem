@@ -213,6 +213,28 @@ if(window.matchMedia){
   apply();
 })();
 
+/* Echte Header-Hoehe als --hdr-h bereitstellen.
+   Die CSS-Werte (60px + Statusleiste) sind nur Schaetzungen; auf dem iPad 12.9"
+   als PWA war der Header 7px hoeher und die Theke ragte unten aus dem Bild.
+   Gemessen wird bei jeder Groessenaenderung (Drehen, Schriftregler, Umbruch). */
+(function trackHeaderHeight(){
+  const hdr=document.getElementById('app-header');
+  if(!hdr || !window.ResizeObserver) return;
+  const apply=()=>{
+    const h=hdr.getBoundingClientRect().height;
+    if(h<=0) return; // ausgeblendet (Login): CSS-Fallback behalten
+    const mb=parseFloat(getComputedStyle(hdr).marginBottom)||0;
+    document.documentElement.style.setProperty('--hdr-h', Math.ceil(h+mb)+'px');
+  };
+  // border-box: Media-Queries aendern nur das Padding, die Inhaltsbox bleibt gleich
+  new ResizeObserver(apply).observe(hdr, { box:'border-box' });
+  apply();
+})();
+
+/* POS-Kacheln neu vermessen, sobald sich der Produktbereich in der Groesse
+   aendert, z.B. wenn der Checkout durch weitere Positionen waechst. */
+const posAreaObserver=window.ResizeObserver ? new ResizeObserver(()=>requestAnimationFrame(layoutPOSGrid)) : null;
+
 // =============================================================================
 // LONG-PRESS (gemeinsamer Helper)
 // Bricht bei Fingerbewegung ab, damit Scrollen ueber einer Kachel nicht nach
@@ -375,6 +397,35 @@ function connectWebSocket() {
   }
 }
 
+/* Layout-Telemetrie: echte Safe-Areas und Hoehen der Theke-Bloecke, damit sich
+   Layoutfehler auf dem iPad (PWA) vom Server aus nachmessen lassen. */
+function measureLayout(){
+  try {
+    const probe=document.createElement('div');
+    probe.style.cssText='position:fixed;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)';
+    document.body.appendChild(probe);
+    const cs=getComputedStyle(probe);
+    const safe={ top:parseFloat(cs.paddingTop), right:parseFloat(cs.paddingRight), bottom:parseFloat(cs.paddingBottom), left:parseFloat(cs.paddingLeft) };
+    probe.remove();
+    const rects={};
+    ['#app-header','#view-theke','#theke-columns','.pos-column','.pos-products-area','.pos-checkout-area','.pos-checkout-area .pos-actions'].forEach(sel=>{
+      const el=document.querySelector(sel);
+      if(!el || !el.offsetParent && sel!=='#app-header') return;
+      const r=el.getBoundingClientRect();
+      rects[sel]={ top:Math.round(r.top), bottom:Math.round(r.bottom), h:Math.round(r.height), scrollH:el.scrollHeight };
+    });
+    return {
+      safe,
+      innerH: window.innerHeight,
+      clientH: document.documentElement.clientHeight,
+      vvH: window.visualViewport ? Math.round(window.visualViewport.height) : null,
+      screenH: screen.height,
+      hdrVar: getComputedStyle(document.documentElement).getPropertyValue('--hdr-h').trim(),
+      rects
+    };
+  } catch(e){ return { error:String(e) }; }
+}
+
 function sendClientInfo() {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
   try {
@@ -385,7 +436,8 @@ function sendClientInfo() {
       standalone: window.matchMedia('(display-mode: standalone)').matches || !!window.navigator.standalone,
       userAgent: navigator.userAgent,
       role: state.role || null,
-      user: state.user || null
+      user: state.user || null,
+      layout: measureLayout()
     };
     state.ws.send(JSON.stringify({ event: 'client:info', data: info, timestamp: new Date().toISOString() }));
   } catch (err) {
@@ -609,6 +661,9 @@ function handleWebSocketEvent(event, data) {
     case 'products:updated':
       state.products = data;
       if (!$('#view-products').classList.contains('hidden')) renderProducts();
+      // Theke ebenfalls neu aufbauen, sonst bleibt die alte Reihenfolge stehen
+      // (Warenkorb liegt in state.posBasket und bleibt erhalten)
+      if (!$('#view-theke').classList.contains('hidden')) renderTheke();
       break;
 
     case 'tables:updated':
@@ -1858,6 +1913,9 @@ async function renderTheke(){
   // Aufbau nicht, sonst animiert die komplette Ansicht auf einmal.
   state.thekeRendered=true;
   updateHeader('#view-theke');
+  // Layout-Telemetrie nach dem Aufbau melden (debounced, Grid ist dann vermessen)
+  if (_clientInfoResizeTimer) clearTimeout(_clientInfoResizeTimer);
+  _clientInfoResizeTimer = setTimeout(sendClientInfo, 500);
 
   // Stelle Scroll-Positionen wieder her (mit requestAnimationFrame für besseres Timing)
   requestAnimationFrame(() => {
@@ -2443,6 +2501,7 @@ function renderPOSColumn(container){
 
   // Nach Layout: Grid dynamisch vermessen (zweimal, damit Grid-Row-Sizing 1fr stabil ist)
   requestAnimationFrame(()=>{ layoutPOSGrid(); requestAnimationFrame(layoutPOSGrid); });
+  if(posAreaObserver){ posAreaObserver.disconnect(); posAreaObserver.observe(productsArea); }
 }
 
 /* Baut den Checkout-Bereich. Eigene Funktion, damit ein Mengenwechsel nur
@@ -2869,6 +2928,28 @@ const FAV_COLORS=[
   {c:'#A8DCD9',n:'Türkis'},{c:'#A8D5BA',n:'Mintgrün'},{c:'#C1E1C1',n:'Hellgrün'},{c:'#DCEBA8',n:'Limette'},
   {c:'#E6DAC3',n:'Sand'},{c:'#C7C7C7',n:'Grau'},{c:'#ffffff',n:'Weiß'}
 ];
+/* Reihenfolge speichern: schnelle Pfeilklicks buendeln und Anfragen nacheinander
+   senden. Frueher ging jeder Klick sofort raus; ueberholte eine aeltere Anfrage
+   eine neuere, blieb auf dem Server die aeltere Reihenfolge stehen. */
+let _orderSaveTimer=null;
+let _orderSaveChain=Promise.resolve();
+function scheduleProductOrderSave(){
+  if(_orderSaveTimer) clearTimeout(_orderSaveTimer);
+  _orderSaveTimer=setTimeout(()=>{
+    _orderSaveTimer=null;
+    _orderSaveChain=_orderSaveChain.then(async ()=>{
+      // Erst beim Senden lesen, damit immer der aktuelle Tabellenstand rausgeht
+      const ids=$$('#prod-table tbody tr').map(tr=>+tr.dataset.id);
+      try{
+        await api('/api/products/order',{method:'PUT', body:JSON.stringify({order:ids})});
+        state.products=await api('/api/products');
+      }catch(e){
+        showNotification('Reihenfolge nicht gespeichert: '+e.message, 'warning');
+      }
+    });
+  }, 400);
+}
+
 async function adminProductsLoad(){
   state.config=await api('/api/config'); // frisch, damit neue Theken/Kategorien erscheinen
   const list=await api('/api/products');
@@ -2906,7 +2987,7 @@ async function adminProductsLoad(){
   });
   tbl.appendChild(tb);
 
-  tb.addEventListener('click', async (e)=>{ const del=e.target.closest('.btn-del'); if(del){ const id=+del.dataset.id; const pname=(state.products.find(p=>p.id===id)||{}).name||('#'+id); if(!await uiConfirm(`"${pname}" wird dauerhaft gelöscht.`,{title:'Produkt löschen?',confirmLabel:'Löschen',destructive:true})) return; await api(`/api/products/${id}`,{method:'DELETE'}); await adminProductsLoad(); return; } const up=e.target.closest('.btn-up'); const down=e.target.closest('.btn-down'); if(!up&&!down) return; const id=+(up?up.dataset.id:down.dataset.id); const row=tb.querySelector(`tr[data-id="${id}"]`); if(up){ const prev=row.previousElementSibling; if(prev) tb.insertBefore(row,prev); } else { const next=row.nextElementSibling; if(next) tb.insertBefore(next,row); } $$('#prod-table tbody tr .btn-up').forEach((b,i)=> b.disabled=(i===0)); const rows=$$('#prod-table tbody tr'); rows.forEach((r,i)=>{ const dn=r.querySelector('.btn-down'); if(dn) dn.disabled=(i===rows.length-1); }); const ids=$$('#prod-table tbody tr').map(tr=>+tr.dataset.id); await api('/api/products/order',{method:'PUT', body:JSON.stringify({order:ids})}); state.products=await api('/api/products'); });
+  tb.addEventListener('click', async (e)=>{ const del=e.target.closest('.btn-del'); if(del){ const id=+del.dataset.id; const pname=(state.products.find(p=>p.id===id)||{}).name||('#'+id); if(!await uiConfirm(`"${pname}" wird dauerhaft gelöscht.`,{title:'Produkt löschen?',confirmLabel:'Löschen',destructive:true})) return; await api(`/api/products/${id}`,{method:'DELETE'}); await adminProductsLoad(); return; } const up=e.target.closest('.btn-up'); const down=e.target.closest('.btn-down'); if(!up&&!down) return; const id=+(up?up.dataset.id:down.dataset.id); const row=tb.querySelector(`tr[data-id="${id}"]`); if(up){ const prev=row.previousElementSibling; if(prev) tb.insertBefore(row,prev); } else { const next=row.nextElementSibling; if(next) tb.insertBefore(next,row); } $$('#prod-table tbody tr .btn-up').forEach((b,i)=> b.disabled=(i===0)); const rows=$$('#prod-table tbody tr'); rows.forEach((r,i)=>{ const dn=r.querySelector('.btn-down'); if(dn) dn.disabled=(i===rows.length-1); }); scheduleProductOrderSave(); });
   // Farb-Dropdown: Hintergrund des Selects spiegelt die gewaehlte Farbe
   tb.querySelectorAll('select[data-k="color"]').forEach(sel=>{
     sel.addEventListener('change', ()=>{
@@ -3461,6 +3542,26 @@ function shortUA(ua){
   return ua.slice(0,40);
 }
 
+/* Wertet die Layout-Telemetrie eines Geraets aus (siehe measureLayout()).
+   Liefert Kurzinfo und Liste erkannter Probleme. */
+function layoutCheck(l){
+  if(!l || !l.safe) return { info:'—', problems:[] };
+  const r=l.rects||{};
+  const hdr=r['#app-header'];
+  const info=`Safe ${l.safe.top}/${l.safe.bottom}`+(hdr?` · Header ${hdr.h}`:'');
+  const problems=[];
+  const view=r['#view-theke'];
+  if(view && view.bottom>l.innerH+1) problems.push(`Theke ragt ${view.bottom-l.innerH}px über den Rand`);
+  const labels={ '#theke-columns':'Spalten', '.pos-column':'POS-Spalte', '.pos-products-area':'Kacheln', '.pos-checkout-area':'Kassierbereich' };
+  Object.entries(labels).forEach(([sel,name])=>{
+    const x=r[sel];
+    if(x && x.scrollH>x.h+1) problems.push(`${name} ${x.scrollH-x.h}px abgeschnitten`);
+  });
+  const act=r['.pos-checkout-area .pos-actions'];
+  if(act && act.bottom>l.innerH) problems.push(`Kassier-Buttons ${act.bottom-l.innerH}px außerhalb`);
+  return { info, problems };
+}
+
 function renderSystemClients(clients){
   const wrap=$('#system-clients');
   if(!wrap) return;
@@ -3471,7 +3572,7 @@ function renderSystemClients(clients){
   }
   const table=document.createElement('table');
   table.className='prod-table';
-  table.innerHTML='<thead><tr><th>Rolle/User</th><th>Viewport</th><th>Orient.</th><th>DPR</th><th>PWA</th><th>Device</th><th>IP</th><th>seit</th></tr></thead>';
+  table.innerHTML='<thead><tr><th>Rolle/User</th><th>Viewport</th><th>Orient.</th><th>DPR</th><th>PWA</th><th>Layout</th><th>Device</th><th>IP</th><th>seit</th></tr></thead>';
   const tb=document.createElement('tbody');
   clients.forEach(c=>{
     const tr=document.createElement('tr');
@@ -3489,7 +3590,11 @@ function renderSystemClients(clients){
       else if(diffSec<3600) seit=Math.floor(diffSec/60)+'m';
       else seit=Math.floor(diffSec/3600)+'h '+Math.floor((diffSec%3600)/60)+'m';
     }
-    tr.innerHTML=`<td><strong>${roleUser}</strong></td><td>${vp}</td><td>${orient}</td><td>${dpr}</td><td style="text-align:center;">${pwa}</td><td>${dev}</td><td><span class="muted">${ip}</span></td><td>${seit}</td>`;
+    const lc=layoutCheck(c.layout);
+    const layoutCell=lc.problems.length
+      ? `<span class="muted">${lc.info}</span><br><span style="color:var(--red);font-weight:700">⚠ ${lc.problems.join(' · ')}</span>`
+      : `<span class="muted">${lc.info}</span>${c.layout&&c.layout.safe?' ✓':''}`;
+    tr.innerHTML=`<td><strong>${roleUser}</strong></td><td>${vp}</td><td>${orient}</td><td>${dpr}</td><td style="text-align:center;">${pwa}</td><td>${layoutCell}</td><td>${dev}</td><td><span class="muted">${ip}</span></td><td>${seit}</td>`;
     tb.appendChild(tr);
   });
   table.appendChild(tb);

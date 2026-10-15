@@ -1014,7 +1014,7 @@ wss.on('connection', (ws, req) => {
     }));
 
     const sessions = db.prepare('SELECT waiter, last_heartbeat FROM waiter_sessions ORDER BY waiter').all();
-    const products = db.prepare(`SELECT ${PRODUCT_COLS} FROM products`).all().map(mapProductRow);
+    const products = getProductsList(); // sortiert nach Admin-Reihenfolge, sonst ueberschreibt init die richtige Liste mit ID-Reihenfolge
 
     ws.send(JSON.stringify({
       event: 'init',
@@ -1050,7 +1050,8 @@ wss.on('connection', (ws, req) => {
             user: data.data.user ?? meta.user,
             orientation: data.data.orientation || meta.orientation,
             dpr: data.data.dpr ?? meta.dpr,
-            standalone: data.data.standalone ?? meta.standalone
+            standalone: data.data.standalone ?? meta.standalone,
+            layout: data.data.layout ?? meta.layout
           });
         }
       }
